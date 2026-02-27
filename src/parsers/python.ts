@@ -218,7 +218,7 @@ function parseClassMethods(
     const indent = line.length - line.trimStart().length;
     if (indent !== classIndent) continue;
 
-    // Collect decorators
+    // Collect decorators — check lines[i] directly (trimmed is stale once i advances)
     let decorators: string[] = [];
     let decoratorStart = i;
     while (i <= endLine && lines[i]?.trim().startsWith("@")) {
