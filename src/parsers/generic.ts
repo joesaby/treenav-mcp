@@ -106,7 +106,7 @@ export function parseGeneric(source: string, docId: string, ext: string): CodeSy
 
     // --- Struct/class ---
     const structMatch =
-      trimmed.match(/^(?:pub\s+)?(?:export\s+)?(?:abstract\s+)?(?:struct|class|data\s+class|object)\s+(\w+)/) ||
+      trimmed.match(/^(?:(?:pub(?:lic)?|private|protected|internal|sealed|final|static|export|abstract)\s+)*(?:struct|class|data\s+class|object)\s+(\w+)/) ||
       (lang === "go" && trimmed.match(/^type\s+(\w+)\s+struct\b/)) ||
       (lang === "ruby" && trimmed.match(/^class\s+(\w+)/));
 
@@ -242,6 +242,37 @@ export function parseGeneric(source: string, docId: string, ext: string): CodeSy
           continue;
         }
       }
+
+      // C-style function declaration: return_type [*] name(params)
+      // No keyword prefix — detect by finding last word before (
+      const parenIdx = trimmed.indexOf("(");
+      if (parenIdx > 0 && !trimmed.startsWith("#") && !trimmed.startsWith("//")) {
+        const beforeParen = trimmed.slice(0, parenIdx).trim();
+        const nameMatch = beforeParen.match(/[*&\s](\w+)$/);
+        if (nameMatch) {
+          const cFuncName = nameMatch[1];
+          const excluded = ["if", "for", "while", "switch", "return", "sizeof", "typeof", "case", "catch", "throw"];
+          const beforeName = beforeParen.slice(0, beforeParen.lastIndexOf(cFuncName)).trim();
+          if (!excluded.includes(cFuncName) && beforeName.length > 0 && /\w/.test(beforeName)) {
+            const blockEnd = findBraceBlockEnd(lines, i);
+            counter++;
+            symbols.push({
+              id: `${docId}:n${counter}`,
+              name: cFuncName,
+              kind: "function",
+              signature: trimmed.replace(/[{;]\s*$/, "").trim(),
+              content: lines.slice(i, blockEnd > i ? blockEnd + 1 : i + 1).join("\n"),
+              line_start: i + 1,
+              line_end: (blockEnd > i ? blockEnd : i) + 1,
+              exported: !trimmed.startsWith("static"),
+              children_ids: [],
+              parent_id: null,
+            });
+            i = blockEnd > i ? blockEnd : i;
+            continue;
+          }
+        }
+      }
     }
 
     // --- Constant / type alias ---
@@ -254,6 +285,12 @@ export function parseGeneric(source: string, docId: string, ext: string): CodeSy
       let endLine = i;
       if (trimmed.includes("{")) {
         endLine = findBraceBlockEnd(lines, i);
+      } else if (trimmed.includes("(") && !trimmed.includes(")")) {
+        // Grouped declaration: const ( ... ) or var ( ... )
+        while (endLine < lines.length - 1 && !lines[endLine].includes(")")) endLine++;
+      } else if (lang === "go") {
+        // Go single-line const/var — no semicolons needed
+        endLine = i;
       } else {
         while (endLine < lines.length - 1 && !lines[endLine].trimEnd().match(/[;)]/)) endLine++;
       }
@@ -300,7 +337,8 @@ function parseGenericMembers(
     const methodMatch =
       trimmed.match(/^(?:pub\s+)?(?:(?:async\s+)?fn|func|function|def)\s+(\w+)\s*\(/) ||
       (lang === "go" && trimmed.match(/^func\s+(\w+)\s*\(/)) ||
-      (lang === "ruby" && trimmed.match(/^def\s+(\w+)/));
+      (lang === "ruby" && trimmed.match(/^def\s+(\w+)/)) ||
+      (lang === "java" && trimmed.match(/^(?:(?:public|private|protected|static|final|abstract|synchronized|native|override)\s+)*\w+(?:\s*<[^>]*>)?\s+(\w+)\s*\(/));
 
     if (methodMatch) {
       const name = methodMatch[1];
