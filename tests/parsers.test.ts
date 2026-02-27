@@ -11,6 +11,7 @@ import { describe, test, expect } from "bun:test";
 import { parseTypeScript } from "../src/parsers/typescript";
 import { parsePython } from "../src/parsers/python";
 import { parseGeneric } from "../src/parsers/generic";
+import { parseJava } from "../src/parsers/java";
 import type { CodeSymbol } from "../src/code-indexer";
 
 import {
@@ -877,8 +878,8 @@ describe("Generic Parser (Rust)", () => {
 // Generic Parser — Java
 // ════════════════════════════════════════════════════════════════════
 
-describe("Generic Parser (Java)", () => {
-  const symbols = parseGeneric(JAVA_CLASS, "test:java", ".java");
+describe("Java Parser", () => {
+  const symbols = parseJava(JAVA_CLASS, "test:java");
 
   test("extracts public class", () => {
     const cls = findByName(symbols, "AuthenticationService");
@@ -890,7 +891,6 @@ describe("Generic Parser (Java)", () => {
   test("extracts class methods", () => {
     const cls = findByName(symbols, "AuthenticationService")!;
     const methods = childrenOf(symbols, cls);
-    const names = methods.map((m) => m.name);
     // Java methods should be extracted as members
     expect(methods.length).toBeGreaterThan(0);
   });
