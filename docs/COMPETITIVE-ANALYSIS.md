@@ -2,16 +2,15 @@
 
 _Last verified: February 2026_
 
-This document positions treenav-mcp against the MCP document retrieval
-ecosystem. For architecture and attribution details, see [DESIGN.md](./DESIGN.md).
+This document positions treenav-mcp against the MCP document retrieval and
+code navigation ecosystem. For architecture and attribution details, see
+[DESIGN.md](./DESIGN.md).
 
 ---
 
 ## The Landscape
 
-Six projects occupy the MCP document retrieval space. Each makes different
-trade-offs across search quality, token efficiency, setup friction,
-and infrastructure requirements.
+### Documentation retrieval
 
 | Project | Approach | Stars | Local/Cloud | LLM at Index | LLM at Query |
 |---------|----------|-------|-------------|--------------|--------------|
@@ -22,6 +21,19 @@ and infrastructure requirements.
 | **docs-mcp-server** (arabold) | General indexer + optional embeddings | — | Local | Optional | Optional |
 | **MCP-Markdown-RAG** (Zackriya) | Vector RAG over markdown (Milvus) | — | Local | Yes (embeddings) | No |
 | **Context7** (Upstash) | Pre-indexed OSS library docs | 45.7K | Cloud | — | — |
+
+### Code navigation
+
+| Project | Approach | Parser | BM25? | Tree nav? |
+|---------|----------|--------|-------|-----------|
+| **treenav-mcp** | Symbol index + BM25 + tree nav | Regex/indent AST | Yes | Yes |
+| **Code-Index-MCP** (ViperJuice) | Symbol index + BM25 | tree-sitter (48 langs) | Yes (SQLite FTS5) | No |
+| **mcp-server-tree-sitter** (wrale) | Live AST queries | tree-sitter (100+ langs) | No | No |
+| **Serena** (oraios) | Symbol search + LSP integration | tree-sitter + LSP | No | No |
+| **ast-grep-mcp** | Structural pattern matching | tree-sitter | No | No |
+
+treenav-mcp is the only tool in either table that covers both markdown documentation
+and source code in a single BM25-indexed, tree-navigable corpus.
 
 ---
 
@@ -132,8 +144,7 @@ code search API.
   OSS project.
 - Breadth. Works on any public GitHub repo instantly. The generic endpoint
   (`gitmcp.io/docs`) lets the agent pick the repo dynamically.
-- Code search. Leverages GitHub's code search API — treenav-mcp is
-  documentation-only.
+- No local clone needed. GitMCP works directly against the GitHub API.
 
 **Where treenav-mcp wins:**
 
@@ -175,10 +186,9 @@ PDF, Word, Excel, PowerPoint, and source code. Optionally uses embeddings
 
 **Where docs-mcp-server wins:**
 
-- Format breadth. Handles PDF, Word, Excel, PowerPoint — treenav-mcp is
-  markdown-only.
+- Format breadth. Handles PDF, Word, Excel, PowerPoint, remote URLs, and
+  GitHub repos — treenav-mcp covers markdown and source code files.
 - Optional semantic search via configurable embedding providers.
-- Can index remote URLs and GitHub repos directly.
 
 **Where treenav-mcp wins:**
 
@@ -310,24 +320,58 @@ download models.
 
 ---
 
+### 7. Code Navigation Competitors
+
+treenav-mcp's code navigation competes with a set of MCP servers purpose-built
+for source code. Key comparisons:
+
+**vs Code-Index-MCP (ViperJuice):** The most architecturally similar code-only
+tool. Uses SQLite FTS5 (BM25-based) and tree-sitter for 48 languages, with
+optional Voyage AI embeddings. Richer language coverage and call-graph
+tracking; no hierarchical tree navigation model, code-only (no markdown docs).
+
+**vs mcp-server-tree-sitter (wrale):** Richest AST navigation — exposes raw
+tree-sitter CSTs, symbol extraction, cyclomatic complexity, and dependency
+analysis for 100+ languages. No BM25 ranking; agents can't search "rate limit
+implementation" and get scored results. Complementary for deep structural
+queries; treenav-mcp is better for relevance-ranked keyword search.
+
+**vs Serena (oraios):** Best-in-class for language-server integration
+(tree-sitter + optional LSP semantic data). Purpose-built for interactive
+code editing assistance. No persistent BM25 index; no markdown doc support.
+
+**vs ast-grep-mcp:** Structural *pattern* matching (find all `X.method()` calls
+matching a shape) rather than keyword relevance ranking. Complementary —
+use ast-grep-mcp for refactoring patterns, treenav-mcp for content search.
+
+**The key differentiator:** treenav-mcp is the only tool that provides
+BM25-ranked search *and* hierarchical tree navigation *across both markdown
+docs and source code* in a single unified index. An agent searching "rate
+limit" gets hits from your runbook docs, your API reference, and your
+`RateLimitPolicyImpl` class implementation, all scored together.
+
+---
+
 ## Positioning
 
-treenav-mcp occupies a specific niche: **structured local-first document
-retrieval for agents, with zero external dependencies.**
+treenav-mcp occupies a specific niche: **structured local-first navigation
+over both documentation and source code, with zero external dependencies.**
 
 It trades:
 - GitMCP's convenience for retrieval precision and offline capability
 - PageIndex's LLM reasoning for zero-cost speed and simplicity
 - QMD's semantic matching for zero-model-download operation
+- Code-Index-MCP's tree-sitter precision for unified docs+code search
 - Vector RAG's vocabulary independence for structural awareness
 
-The 90% case — structured markdown documentation that agents need to
+The 90% case — structured markdown docs and source code that agents need to
 navigate efficiently — gets comparable retrieval quality at a fraction
 of the cost, latency, and complexity.
 
 The 10% where alternatives win: complex PDFs with cross-references
 (PageIndex), semantic fuzzy matching across inconsistent terminology (QMD),
-zero-setup access to any OSS project (GitMCP).
+zero-setup access to any OSS project (GitMCP), deep language-server
+semantics for code editing (Serena).
 
 ---
 

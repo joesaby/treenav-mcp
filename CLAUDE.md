@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-treenav-mcp is an MCP (Model Context Protocol) server that provides agentic document retrieval over markdown repositories and source code. It combines BM25 probabilistic search with hierarchical tree navigation — agents get a table of contents they can reason over, plus precise section retrieval. Supports AST-based code navigation for TypeScript, Python, Go, Rust, Java, and more. No vector DB, no embeddings, no LLM calls at index or retrieval time.
+treenav-mcp is an MCP (Model Context Protocol) server that provides BM25 search and hierarchical tree navigation over markdown documentation and source code. Agents get a table of contents they can reason over — for both docs and code — then retrieve only the sections or symbols they need. Supports AST-based code navigation for TypeScript, Python, Go, Rust, Java, C/C++, and more. No vector DB, no embeddings, no LLM calls at index or retrieval time.
 
 ## Architecture
 

@@ -2,10 +2,10 @@
 
 ## Standing on the Shoulders of Giants
 
-This project is a synthesis of ideas from three excellent projects. None
+This project is a synthesis of ideas from several excellent projects. None
 of the core architectural concepts are original — the value is in the
-specific composition that makes them work together for **agentic document
-retrieval** over markdown repositories.
+specific composition that makes them work together for **agentic navigation**
+over markdown documentation and source code.
 
 Every design decision is attributed to its source. If you're reading this
 document, you should go read the originals too:
@@ -14,6 +14,7 @@ document, you should go read the originals too:
 |--------|-------------|------|
 | **PageIndex** | Hierarchical tree navigation, agent reasoning workflow | [pageindex.ai](https://pageindex.ai) |
 | **Pagefind** (CloudCannon) | BM25 scoring, positional index, filter facets, density excerpts, content hashing, multisite, weighting, stemming | [pagefind.app](https://pagefind.app) |
+| **Universal Ctags / tree-sitter tradition** | Symbol extraction mapped to tree nodes — classes, functions, interfaces become navigable sections | [ctags.io](https://ctags.io) |
 | **Bun.markdown** (Oven) | Native CommonMark parser with render callbacks | [bun.sh](https://bun.sh/blog/bun-v1.3.8) |
 | **Astro Starlight** | The documentation framework whose Pagefind integration prompted this investigation | [starlight.astro.build](https://starlight.astro.build) |
 
@@ -266,7 +267,49 @@ so the agent can make retrieval decisions without loading full content.
 
 ---
 
-### 4. Astro Starlight — The Prompt
+### 4. AST Symbol Extraction — Code as a Tree
+
+**Inspiration:** Universal Ctags, tree-sitter, and Aider's repo-map all
+share the same core insight: source code has a natural hierarchical
+structure (file → class → method) that maps directly to the document tree
+model used for markdown.
+
+**What we took:**
+
+- The symbol-extraction concept from ctags: scan source files and emit
+  a flat or hierarchical table of symbol names, kinds, and line ranges.
+- Aider's repo-map insight: an agent given a compact *outline* of a
+  codebase (signatures only, no bodies) can reason about which symbols
+  matter before retrieving full content. This is the same token-efficiency
+  argument as the PageIndex outline model.
+- The observation that `.h` and `.cc` files (or `.ts` interface and
+  implementation) serve as natural sibling documents that benefit from
+  separate indexing with distinct IDs.
+
+**How we differ:**
+
+- ctags produces a flat tag file with no search engine. We map symbols into
+  the same `TreeNode` model used for markdown and feed them into the same
+  BM25 index. Searching "rate limit" returns both markdown docs *and* the
+  `RateLimitPolicyImpl` class from C++ source, ranked together.
+- tree-sitter builds full parse trees (more accurate, requires compiled
+  grammars per language). We use regex-based and indentation-aware parsers
+  — less precise on complex patterns, but zero native dependencies and fast
+  enough for incremental indexing at agent query latency.
+- Aider's repo-map is ephemeral (rebuilt per editing session, not a
+  persistent search server). Ours is a persistent MCP server with a query
+  API.
+
+**Key design decision — doc_id includes the file extension:**
+
+A common pitfall with code indexers is stripping the file extension from
+the document ID, causing `.h` and `.cc` files with the same base name to
+collide silently. We preserve the extension as a suffix (`_h`, `_cc`,
+`_ts`) so `auth.h` and `auth.cc` get distinct IDs and are both indexed.
+
+---
+
+### 5. Astro Starlight — The Prompt
 
 **Source:** [starlight.astro.build](https://starlight.astro.build)
 
@@ -279,61 +322,69 @@ search layer of this project.
 ## Architecture Overview
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                  MCP Server (stdio or HTTP)                       │
-│                                                                   │
-│  ┌──────────────┐  ┌───────────────┐  ┌───────────────────────┐  │
-│  │ list_docs    │  │ search_docs   │  │ get_tree              │  │
-│  │              │  │  (BM25)       │  │ get_node_content      │  │
-│  │ Catalog +    │  │  Positional   │  │ navigate_tree         │  │
-│  │ facet counts │  │  index        │  │                       │  │
-│  │ pagination   │  │  stemming     │  │  Tree navigation      │  │
-│  │ (Pagefind    │  │  prefix match │  │  (PageIndex-style)    │  │
-│  │  filters)    │  │  facet filter │  │                       │  │
-│  └──────┬───────┘  └──────┬────────┘  └──────────┬────────────┘  │
-│         │                 │                       │               │
-│         └─────────────────┼───────────────────────┘               │
-│                           │                                       │
-│              ┌────────────▼─────────────┐                         │
-│              │   DocumentStore          │                         │
-│              │                          │                         │
-│              │  docs: Map<id, Doc>      │                         │
-│              │  index: Map<term,        │                         │
-│              │         Posting[]>       │                         │
-│              │  filters: Map<key,       │  ← Pagefind filters    │
-│              │       Map<val, Set>>     │                         │
-│              │  hashes: Map<path, hash> │  ← Pagefind hashing    │
-│              │  collections: Map<       │  ← Pagefind multisite  │
-│              │    name, weight>         │                         │
-│              │  ranking: BM25Params     │                         │
-│              └────────────▲─────────────┘                         │
-│                           │                                       │
-│              ┌────────────┴─────────────┐                         │
-│              │   Indexer                 │                         │
-│              │  Bun.markdown.render()   │                         │
-│              │  frontmatter → facets    │                         │
-│              │  content hashing         │                         │
-│              └────────────▲─────────────┘                         │
-│                           │                                       │
-└───────────────────────────┼───────────────────────────────────────┘
-                            │
-                   ┌────────┴────────┐
-                   │  .md files      │
-                   │  (multi-root)   │
-                   └─────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                    MCP Server (stdio or HTTP)                         │
+│                                                                       │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────┐  │
+│  │ list_docs    │  │ search_docs  │  │ get_tree     │  │  find_   │  │
+│  │              │  │  (BM25)      │  │ get_node_    │  │  symbol  │  │
+│  │ Catalog +    │  │  Positional  │  │ content      │  │          │  │
+│  │ facet counts │  │  index       │  │ navigate_    │  │  Code-   │  │
+│  │ pagination   │  │  stemming    │  │ tree         │  │  specific│  │
+│  │              │  │  prefix match│  │              │  │  filter  │  │
+│  │              │  │  facet filter│  │  (PageIndex) │  │          │  │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  └────┬─────┘  │
+│         └─────────────────┴─────────────────┴───────────────┘        │
+│                                     │                                 │
+│                        ┌────────────▼──────────────┐                  │
+│                        │      DocumentStore         │                  │
+│                        │                            │                  │
+│                        │  docs: Map<id, Doc>        │                  │
+│                        │  index: Map<term,Posting>  │  ← BM25         │
+│                        │  filters: Map<key,val,Set> │  ← Pagefind     │
+│                        │  hashes: Map<path, hash>   │  ← Pagefind     │
+│                        │  collections: Map<name,w>  │  ← Pagefind     │
+│                        │  ranking: BM25Params        │                  │
+│                        └──────────────▲─────────────┘                  │
+│                                       │                                │
+│              ┌────────────────────────┴───────────────────────┐        │
+│              │                                                 │        │
+│   ┌──────────┴──────────┐                 ┌───────────────────┴──────┐ │
+│   │   Markdown Indexer   │                 │     Code Indexer          │ │
+│   │  Bun.markdown.render │                 │  Language parsers:        │ │
+│   │  frontmatter→facets  │                 │  TypeScript regex AST     │ │
+│   │  content hashing     │                 │  Python indent-aware      │ │
+│   └──────────┬──────────┘                 │  Generic (Go/Rust/C++...) │ │
+│              │                             └───────────────────┬──────┘ │
+└──────────────┼─────────────────────────────────────────────────┼────────┘
+               │                                                  │
+      ┌────────┴────────┐                              ┌──────────┴────────┐
+      │   .md files     │                              │  source files     │
+      │   (multi-root)  │                              │  .ts .py .go .cc  │
+      └─────────────────┘                              └───────────────────┘
 ```
 
-### Three Layers
+### Four Layers
 
-1. **Indexer** (Bun.markdown) — Parses raw markdown into `IndexedDocument`
-   objects with metadata, tree nodes, filter facets, and content hash.
-   Zero LLM cost.
+1. **Markdown Indexer** — Parses raw markdown via `Bun.markdown.render()` into
+   `IndexedDocument` objects with metadata, tree nodes (one per heading),
+   filter facets from frontmatter, and content hash. Zero LLM cost.
 
-2. **Store** (BM25 + positional index + facets) — In-memory store with
+2. **Code Indexer** — Parses source files using language-specific parsers
+   (TypeScript regex AST, Python indentation-aware, generic for Go/Rust/C++
+   and others). Maps symbols (classes, functions, methods, interfaces) into
+   the same `IndexedDocument` / `TreeNode` model. Adds `language`,
+   `content_type`, and `symbol_kind` facets automatically.
+
+3. **Store** (BM25 + positional index + facets) — In-memory store with
    Pagefind-style keyword search and PageIndex-style tree navigation.
+   Handles both markdown nodes and code symbol nodes identically.
    Supports incremental re-indexing via content hashing.
 
-3. **MCP Server** — Exposes 5 tools via `@modelcontextprotocol/sdk`.
+4. **MCP Server** — Exposes 6 tools via `@modelcontextprotocol/sdk`:
+   `list_documents`, `search_documents`, `get_tree`, `get_node_content`,
+   `navigate_tree` (all work on both docs and code), plus `find_symbol`
+   for code-specific filtering by symbol kind and language.
 
 ---
 
@@ -474,6 +525,13 @@ Context budget: 2K-8K tokens vs vector RAG's 4K-20K tokens.
   metadata, and content weighting. The search engine that taught us how
   to build a search engine. If you need search for a static site, just
   use Pagefind directly — it's brilliant.
+
+- **Universal Ctags** ([ctags.io](https://ctags.io)) and the broader
+  symbol-extraction tradition (cscope, GNU Global, tree-sitter, Aider's
+  repo-map) — The concept that source code structure maps naturally to
+  a navigable tree of named symbols. We applied this to the same TreeNode
+  model used for markdown, making BM25 search and tree navigation work on
+  code files without changes to the store or server.
 
 - **Bun.markdown** ([bun.sh](https://bun.sh)) by **Oven** — Native
   CommonMark parser with render callbacks enabling zero-cost tree
