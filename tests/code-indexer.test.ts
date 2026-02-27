@@ -8,6 +8,7 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { parseTypeScript } from "../src/parsers/typescript";
 import { parsePython } from "../src/parsers/python";
+import { parseJava } from "../src/parsers/java";
 import { parseGeneric } from "../src/parsers/generic";
 import { indexCodeFile, isCodeFile } from "../src/code-indexer";
 import { DocumentStore } from "../src/store";
@@ -20,6 +21,10 @@ import {
   TS_INTERFACES_AND_TYPES,
   TS_ARROW_FUNCTIONS,
   PY_CLASS_WITH_METHODS,
+  JAVA_EJB_BEAN,
+  JAVA_ABSTRACT_REPOSITORY,
+  JAVA_INTERFACE,
+  JAVA_ENUM_WITH_METHODS,
   GO_STRUCTS_AND_FUNCS,
 } from "./fixtures/sample-code";
 
@@ -202,6 +207,219 @@ describe("parsePython", () => {
     const imports = symbols.find((s) => s.kind === "import");
     expect(imports).toBeDefined();
     expect(imports!.content).toContain("import");
+  });
+});
+
+// ── Java parser tests ────────────────────────────────────────────────
+
+describe("parseJava", () => {
+  test("groups package + imports into a single import symbol", () => {
+    const symbols = parseJava(JAVA_EJB_BEAN, "test:java");
+
+    const imports = symbols.find((s) => s.kind === "import");
+    expect(imports).toBeDefined();
+    expect(imports!.name).toBe("imports");
+    expect(imports!.content).toContain("import");
+    expect(imports!.parent_id).toBeNull();
+  });
+
+  test("extracts class with annotations in signature", () => {
+    const symbols = parseJava(JAVA_EJB_BEAN, "test:java");
+
+    const bean = symbols.find((s) => s.name === "PersistentObjectServiceBean");
+    expect(bean).toBeDefined();
+    expect(bean!.kind).toBe("class");
+    expect(bean!.exported).toBe(true);
+    expect(bean!.signature).toContain("@Stateless");
+    expect(bean!.signature).toContain("@TransactionAttribute");
+    expect(bean!.signature).toContain("PersistentObjectServiceBean");
+  });
+
+  test("extracts methods as children of the class", () => {
+    const symbols = parseJava(JAVA_EJB_BEAN, "test:java");
+
+    const bean = symbols.find((s) => s.name === "PersistentObjectServiceBean");
+    expect(bean!.children_ids.length).toBeGreaterThan(0);
+
+    const methods = symbols.filter((s) => s.parent_id === bean!.id);
+    const methodNames = methods.map((m) => m.name);
+    expect(methodNames).toContain("create");
+    expect(methodNames).toContain("findByFdn");
+    expect(methodNames).toContain("search");
+    expect(methodNames).toContain("count");
+  });
+
+  test("detects constructor", () => {
+    const symbols = parseJava(JAVA_EJB_BEAN, "test:java");
+
+    const methods = symbols.filter((s) => s.kind === "method");
+    const ctor = methods.find((s) => s.name === "PersistentObjectServiceBean");
+    expect(ctor).toBeDefined();
+  });
+
+  test("captures @Override annotation on method signature", () => {
+    const symbols = parseJava(JAVA_EJB_BEAN, "test:java");
+
+    const create = symbols.find((s) => s.name === "create");
+    expect(create).toBeDefined();
+    expect(create!.signature).toContain("@Override");
+    expect(create!.signature).toContain("create");
+  });
+
+  test("detects protected and private methods", () => {
+    const symbols = parseJava(JAVA_EJB_BEAN, "test:java");
+
+    const validateFdn = symbols.find((s) => s.name === "validateFdn");
+    expect(validateFdn).toBeDefined();
+    expect(validateFdn!.exported).toBe(false); // protected, not public
+
+    const isValidAttr = symbols.find((s) => s.name === "isValidAttribute");
+    expect(isValidAttr).toBeDefined();
+    expect(isValidAttr!.exported).toBe(false); // private
+  });
+
+  test("does not produce false positives from field declarations or injections", () => {
+    const symbols = parseJava(JAVA_EJB_BEAN, "test:java");
+
+    // @Inject fields and @EJB fields should NOT appear as methods
+    const symbolNames = symbols.map((s) => s.name);
+    expect(symbolNames).not.toContain("nodeTypeRepository");
+    expect(symbolNames).not.toContain("eventPropagator");
+  });
+
+  test("does not produce false positives from method-call expressions inside bodies", () => {
+    const symbols = parseJava(JAVA_EJB_BEAN, "test:java");
+
+    // Calls inside method bodies must not produce extra symbols
+    const symbolNames = symbols.map((s) => s.name);
+    expect(symbolNames).not.toContain("propagate");    // eventPropagator.propagate(...) call
+    expect(symbolNames).not.toContain("setAttributes"); // mo.setAttributes(...) call
+
+    // validateFdn is defined as a class member — must appear exactly once,
+    // not again from the call inside create()'s body
+    const validateFdnSymbols = symbols.filter((s) => s.name === "validateFdn");
+    expect(validateFdnSymbols.length).toBe(1);
+  });
+
+  test("extracts abstract class with generic type parameters", () => {
+    const symbols = parseJava(JAVA_ABSTRACT_REPOSITORY, "test:repo");
+
+    const repo = symbols.find((s) => s.name === "AbstractRepository");
+    expect(repo).toBeDefined();
+    expect(repo!.kind).toBe("class");
+    expect(repo!.children_ids.length).toBeGreaterThan(0);
+  });
+
+  test("extracts abstract method (ends with ; no body)", () => {
+    const symbols = parseJava(JAVA_ABSTRACT_REPOSITORY, "test:repo");
+
+    const getEntityClass = symbols.find((s) => s.name === "getEntityClass");
+    expect(getEntityClass).toBeDefined();
+    expect(getEntityClass!.kind).toBe("method");
+  });
+
+  test("extracts methods with complex generic return types", () => {
+    const symbols = parseJava(JAVA_ABSTRACT_REPOSITORY, "test:repo");
+
+    const findAll = symbols.find((s) => s.name === "findAll");
+    expect(findAll).toBeDefined();
+    expect(findAll!.kind).toBe("method");
+
+    const findBy = symbols.find((s) => s.name === "findBy");
+    expect(findBy).toBeDefined();
+    expect(findBy!.kind).toBe("method");
+
+    const save = symbols.find((s) => s.name === "save");
+    expect(save).toBeDefined();
+  });
+
+  test("extracts interface with abstract and default methods", () => {
+    const symbols = parseJava(JAVA_INTERFACE, "test:iface");
+
+    const iface = symbols.find((s) => s.name === "PersistentObjectService");
+    expect(iface).toBeDefined();
+    expect(iface!.kind).toBe("interface");
+    expect(iface!.children_ids.length).toBeGreaterThan(0);
+
+    const methods = symbols.filter((s) => s.parent_id === iface!.id);
+    const methodNames = methods.map((m) => m.name);
+    expect(methodNames).toContain("create");
+    expect(methodNames).toContain("findByFdn");
+    expect(methodNames).toContain("exists"); // default method
+    expect(methodNames).toContain("count");
+  });
+
+  test("extracts enum class", () => {
+    const symbols = parseJava(JAVA_ENUM_WITH_METHODS, "test:enum");
+
+    const nodeStatus = symbols.find((s) => s.name === "NodeStatus");
+    expect(nodeStatus).toBeDefined();
+    expect(nodeStatus!.kind).toBe("enum");
+    expect(nodeStatus!.exported).toBe(true);
+  });
+
+  test("extracts enum constructor and methods", () => {
+    const symbols = parseJava(JAVA_ENUM_WITH_METHODS, "test:enum");
+
+    const methods = symbols.filter((s) => s.kind === "method");
+    const methodNames = methods.map((m) => m.name);
+    expect(methodNames).toContain("NodeStatus"); // constructor
+    expect(methodNames).toContain("getCode");
+    expect(methodNames).toContain("isOperational");
+    expect(methodNames).toContain("fromCode");
+  });
+
+  test("parent-child relationships are consistent", () => {
+    const symbols = parseJava(JAVA_EJB_BEAN, "test:java");
+
+    const bean = symbols.find((s) => s.name === "PersistentObjectServiceBean");
+    expect(bean).toBeDefined();
+
+    for (const childId of bean!.children_ids) {
+      const child = symbols.find((s) => s.id === childId);
+      expect(child).toBeDefined();
+      expect(child!.parent_id).toBe(bean!.id);
+    }
+  });
+
+  test("line numbers are set and ordered correctly", () => {
+    const symbols = parseJava(JAVA_EJB_BEAN, "test:java");
+
+    for (const sym of symbols) {
+      expect(sym.line_start).toBeGreaterThan(0);
+      expect(sym.line_end).toBeGreaterThanOrEqual(sym.line_start);
+    }
+  });
+
+  test("indexCodeFile produces correct facets for Java files", async () => {
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    const { tmpdir } = await import("node:os");
+
+    const dir = await mkdtemp(join(tmpdir(), "treenav-java-test-"));
+    try {
+      const filePath = join(dir, "PersistentObjectServiceBean.java");
+      await writeFile(filePath, JAVA_EJB_BEAN);
+
+      const result = await indexCodeFile(filePath, dir, "code");
+
+      expect(result.meta.facets.language).toEqual(["java"]);
+      expect(result.meta.facets.content_type).toEqual(["code"]);
+      expect(result.meta.facets.symbol_kind).toContain("class");
+      expect(result.meta.facets.symbol_kind).toContain("method");
+      expect(result.tree.length).toBeGreaterThan(0);
+
+      // Class is a root node
+      const classNode = result.tree.find((n) => n.title.includes("class PersistentObjectServiceBean"));
+      expect(classNode).toBeDefined();
+      expect(classNode!.parent_id).toBeNull();
+
+      // Methods are children
+      const methodNodes = result.tree.filter((n) => n.parent_id === classNode!.node_id);
+      expect(methodNodes.length).toBeGreaterThan(0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 

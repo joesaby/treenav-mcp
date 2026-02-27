@@ -13,7 +13,7 @@ import type { CodeSymbol } from "../code-indexer";
 
 /** Language detection from file extension */
 export const GENERIC_EXTENSIONS = new Set([
-  ".go", ".rs", ".java", ".kt", ".scala",
+  ".go", ".rs", ".kt", ".scala",
   ".c", ".cpp", ".cc", ".h", ".hpp",
   ".cs", ".rb", ".swift", ".php",
   ".lua", ".r", ".R", ".sh", ".bash", ".zsh",
@@ -27,7 +27,7 @@ type Lang = "go" | "rust" | "java" | "c" | "ruby" | "shell" | "other";
 function detectLang(ext: string): Lang {
   if (ext === ".go") return "go";
   if (ext === ".rs") return "rust";
-  if ([".java", ".kt", ".scala", ".cs"].includes(ext)) return "java";
+  if ([".kt", ".scala", ".cs"].includes(ext)) return "java";
   if ([".c", ".cpp", ".cc", ".h", ".hpp"].includes(ext)) return "c";
   if (ext === ".rb") return "ruby";
   if ([".sh", ".bash", ".zsh"].includes(ext)) return "shell";

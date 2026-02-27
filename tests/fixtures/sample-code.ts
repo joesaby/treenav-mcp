@@ -161,6 +161,169 @@ def _internal_helper():
     pass
 `;
 
+// ── Java fixtures ────────────────────────────────────────────────────
+
+/** Realistic EJB service bean — tests annotations, all access modifiers, generics, constructors */
+export const JAVA_EJB_BEAN = `package com.example.service;
+
+import javax.ejb.Stateless;
+import javax.ejb.TransactionAttribute;
+import javax.ejb.TransactionAttributeType;
+import javax.inject.Inject;
+import java.util.List;
+import java.util.Map;
+
+@Stateless
+@TransactionAttribute(TransactionAttributeType.REQUIRED)
+public class PersistentObjectServiceBean extends AbstractService
+        implements PersistentObjectService {
+
+    @Inject
+    private NodeTypeRepository nodeTypeRepository;
+
+    @EJB
+    private EventPropagator eventPropagator;
+
+    public PersistentObjectServiceBean() {
+    }
+
+    @Override
+    public ManagedObject create(String fdn, Map<String, Object> attributes) {
+        validateFdn(fdn);
+        final ManagedObject mo = new ManagedObjectImpl(fdn);
+        mo.setAttributes(attributes);
+        eventPropagator.propagate(new CreateEvent(fdn));
+        return mo;
+    }
+
+    @Override
+    public ManagedObject findByFdn(String fdn) {
+        return nodeTypeRepository.findByFdn(fdn);
+    }
+
+    @Override
+    public List<ManagedObject> search(Map<String, Object> criteria) {
+        return nodeTypeRepository.findByCriteria(criteria);
+    }
+
+    @TransactionAttribute(TransactionAttributeType.NOT_SUPPORTED)
+    public long count() {
+        return nodeTypeRepository.count();
+    }
+
+    protected void validateFdn(String fdn) {
+        if (fdn == null || fdn.isEmpty()) {
+            throw new IllegalArgumentException("FDN must not be empty");
+        }
+    }
+
+    private boolean isValidAttribute(String key, Object value) {
+        return key != null && !key.isEmpty() && value != null;
+    }
+}
+`;
+
+/** Abstract repository with generics — tests generic return types, abstract methods */
+export const JAVA_ABSTRACT_REPOSITORY = `package com.example.repository;
+
+import java.util.List;
+import java.util.Optional;
+import javax.persistence.EntityManager;
+import javax.persistence.PersistenceContext;
+import javax.persistence.TypedQuery;
+
+public abstract class AbstractRepository<T, ID> {
+
+    @PersistenceContext
+    protected EntityManager em;
+
+    protected abstract Class<T> getEntityClass();
+
+    public Optional<T> findById(ID id) {
+        return Optional.ofNullable(em.find(getEntityClass(), id));
+    }
+
+    public List<T> findAll() {
+        TypedQuery<T> q = em.createQuery(
+            "SELECT e FROM " + getEntityClass().getSimpleName() + " e",
+            getEntityClass());
+        return q.getResultList();
+    }
+
+    public <R> List<R> findBy(String jpql, Class<R> resultType) {
+        return em.createQuery(jpql, resultType).getResultList();
+    }
+
+    public T save(T entity) {
+        if (em.contains(entity)) {
+            return em.merge(entity);
+        }
+        em.persist(entity);
+        return entity;
+    }
+
+    public void delete(ID id) {
+        T entity = em.find(getEntityClass(), id);
+        if (entity != null) em.remove(entity);
+    }
+}
+`;
+
+/** Interface with default methods — tests abstract method detection (ends with ;) */
+export const JAVA_INTERFACE = `package com.example.api;
+
+import java.util.List;
+
+public interface PersistentObjectService {
+
+    ManagedObject create(String fdn, java.util.Map<String, Object> attributes);
+
+    ManagedObject findByFdn(String fdn);
+
+    List<ManagedObject> search(java.util.Map<String, Object> criteria);
+
+    default boolean exists(String fdn) {
+        return findByFdn(fdn) != null;
+    }
+
+    long count();
+}
+`;
+
+/** Enum with methods — tests enum body parsing */
+export const JAVA_ENUM_WITH_METHODS = `package com.example.model;
+
+public enum NodeStatus {
+
+    ACTIVE("active", true),
+    INACTIVE("inactive", false),
+    PENDING("pending", false);
+
+    private final String code;
+    private final boolean operational;
+
+    NodeStatus(String code, boolean operational) {
+        this.code = code;
+        this.operational = operational;
+    }
+
+    public String getCode() {
+        return code;
+    }
+
+    public boolean isOperational() {
+        return operational;
+    }
+
+    public static NodeStatus fromCode(String code) {
+        for (NodeStatus status : values()) {
+            if (status.code.equals(code)) return status;
+        }
+        throw new IllegalArgumentException("Unknown status: " + code);
+    }
+}
+`;
+
 // ── Go fixtures ─────────────────────────────────────────────────────
 
 export const GO_STRUCTS_AND_FUNCS = `package auth
