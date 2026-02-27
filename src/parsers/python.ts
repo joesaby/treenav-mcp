@@ -221,10 +221,9 @@ function parseClassMethods(
     // Collect decorators
     let decorators: string[] = [];
     let decoratorStart = i;
-    while (trimmed.startsWith("@") || lines[i]?.trim().startsWith("@")) {
+    while (i <= endLine && lines[i]?.trim().startsWith("@")) {
       decorators.push(lines[i].trim());
       i++;
-      if (i > endLine) break;
     }
     if (i > endLine) break;
 
@@ -296,7 +295,7 @@ function findPythonExprEnd(lines: string[], startLine: number): number {
       if (ch === "(" || ch === "[" || ch === "{") depth++;
       if (ch === ")" || ch === "]" || ch === "}") depth--;
     }
-    if (depth <= 0 && i > startLine) return i;
+    if (depth <= 0) return i;
   }
   return startLine;
 }

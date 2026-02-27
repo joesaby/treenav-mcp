@@ -274,13 +274,15 @@ export function parseTypeScript(source: string, docId: string): CodeSymbol[] {
       } else {
         while (endLine < lines.length - 1 && !lines[endLine].trimEnd().endsWith(";")) endLine++;
       }
+      const content = lines.slice(i, endLine + 1).join("\n");
+      const kind = isArrowFunctionContent(content) ? "function" : "variable";
       counter++;
       symbols.push({
         id: `${docId}:n${counter}`,
         name,
-        kind: "variable",
+        kind,
         signature: extractSignature(trimmed),
-        content: lines.slice(i, endLine + 1).join("\n"),
+        content,
         line_start: i + 1,
         line_end: endLine + 1,
         exported: true,
@@ -478,6 +480,33 @@ function findArrowEnd(lines: string[], startLine: number): number {
 function extractSignature(line: string): string {
   // Clean up the first line as a signature
   return line.replace(/\{?\s*$/, "").trim();
+}
+
+/**
+ * Detect if an exported const content is actually an arrow function.
+ * Scans for `=>` at brace-depth 0 and bracket-depth 0, which indicates
+ * the arrow is part of the function body (not nested inside an object/array).
+ */
+function isArrowFunctionContent(content: string): boolean {
+  const eqIdx = content.indexOf("=");
+  if (eqIdx === -1) return false;
+  const rest = content.slice(eqIdx + 1);
+
+  let braceDepth = 0;
+  let bracketDepth = 0;
+  let found = false;
+
+  for (let i = 0; i < rest.length - 1; i++) {
+    const ch = rest[i];
+    if (ch === "{") braceDepth++;
+    if (ch === "}") braceDepth--;
+    if (ch === "[") bracketDepth++;
+    if (ch === "]") bracketDepth--;
+    if (ch === "=" && rest[i + 1] === ">" && braceDepth === 0 && bracketDepth === 0) {
+      found = true;
+    }
+  }
+  return found;
 }
 
 function buildFunctionSignature(lines: string[], start: number, end: number): string {
