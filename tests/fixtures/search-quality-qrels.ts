@@ -452,4 +452,35 @@ export const QRELS: RawQRel[] = [
     category: "zero-result",
     relevant: [],
   },
+
+  // ── C# code symbols (3) ──────────────────────────────────────────
+  {
+    id: "CS1",
+    query: "UserService CreateUserAsync",
+    category: "code-symbol",
+    relevant: [
+      { docTitle: "UserService", nodeTitle: "CreateUserAsync", relevance: 3 },
+      { docTitle: "UserService", relevance: 2 },
+    ],
+    mustBeInTop: { docTitle: "UserService", nodeTitle: "CreateUserAsync", k: 5 },
+  },
+  {
+    id: "CS2",
+    query: "IUserRepository FindByEmail",
+    category: "code-symbol",
+    relevant: [
+      { docTitle: "UserService", nodeTitle: "IUserRepository", relevance: 3 },
+    ],
+    mustBeInTop: { docTitle: "UserService", nodeTitle: "IUserRepository", k: 5 },
+  },
+  {
+    id: "CS3",
+    query: "change password hash verify",
+    category: "multi-term",
+    relevant: [
+      { docTitle: "UserService", nodeTitle: "ChangePasswordAsync", relevance: 3 },
+      { docTitle: "UserService", nodeTitle: "IPasswordHasher", relevance: 2 },
+    ],
+    mustBeInTop: { docTitle: "UserService", nodeTitle: "ChangePasswordAsync", k: 5 },
+  },
 ];
