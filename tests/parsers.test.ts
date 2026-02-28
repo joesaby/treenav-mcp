@@ -12,6 +12,7 @@ import { parseTypeScript } from "../src/parsers/typescript";
 import { parsePython } from "../src/parsers/python";
 import { parseGeneric } from "../src/parsers/generic";
 import { parseJava } from "../src/parsers/java";
+import { parseGo } from "../src/parsers/go";
 import type { CodeSymbol } from "../src/code-indexer";
 
 import {
@@ -1132,5 +1133,113 @@ describe("Content completeness", () => {
     const cfg = findByName(symbols, "Config")!;
     expect(cfg.content).toContain("pub struct Config");
     expect(cfg.content).toContain("debug: bool");
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════
+// Go Parser (dedicated)
+// ════════════════════════════════════════════════════════════════════
+
+describe("parseGo", () => {
+  const GO_SAMPLE = `package cluster
+
+import (
+  "context"
+  "sync"
+)
+
+type NodeState string
+
+const (
+  StateConnected NodeState = "connected"
+  StateOffline   NodeState = "offline"
+)
+
+type ClusterInterface interface {
+  Connect(ctx context.Context, address string) error
+  Disconnect(address string) error
+}
+
+type ClusterManager struct {
+  mu    sync.RWMutex
+  nodes map[string]NodeState
+}
+
+func NewClusterManager() *ClusterManager {
+  return &ClusterManager{nodes: make(map[string]NodeState)}
+}
+
+func (cm *ClusterManager) Connect(ctx context.Context, address string) error {
+  cm.mu.Lock()
+  defer cm.mu.Unlock()
+  cm.nodes[address] = StateConnected
+  return nil
+}
+
+func (cm *ClusterManager) Disconnect(address string) error {
+  cm.mu.Lock()
+  defer cm.mu.Unlock()
+  delete(cm.nodes, address)
+  return nil
+}
+
+func (cm *ClusterManager) activeNodes() []string {
+  return nil
+}`;
+
+  test("extracts struct", () => {
+    const symbols = parseGo(GO_SAMPLE, "cluster.go");
+    const cluster = symbols.find(s => s.name === "ClusterManager");
+    expect(cluster).toBeDefined();
+    expect(cluster!.kind).toBe("class");
+  });
+
+  test("extracts interface", () => {
+    const symbols = parseGo(GO_SAMPLE, "cluster.go");
+    const iface = symbols.find(s => s.name === "ClusterInterface");
+    expect(iface).toBeDefined();
+    expect(iface!.kind).toBe("interface");
+  });
+
+  test("receiver methods become children of their struct", () => {
+    const symbols = parseGo(GO_SAMPLE, "cluster.go");
+    const cluster = symbols.find(s => s.name === "ClusterManager")!;
+    const connect = symbols.find(s => s.name === "Connect")!;
+    const disconnect = symbols.find(s => s.name === "Disconnect")!;
+    expect(connect).toBeDefined();
+    expect(disconnect).toBeDefined();
+    expect(connect.parent_id).toBe(cluster.id);
+    expect(disconnect.parent_id).toBe(cluster.id);
+    expect(cluster.children_ids).toContain(connect.id);
+    expect(cluster.children_ids).toContain(disconnect.id);
+  });
+
+  test("unexported receiver method is a child but marked unexported", () => {
+    const symbols = parseGo(GO_SAMPLE, "cluster.go");
+    const active = symbols.find(s => s.name === "activeNodes")!;
+    expect(active).toBeDefined();
+    expect(active.parent_id).not.toBeNull();
+    expect(active.exported).toBe(false);
+  });
+
+  test("non-receiver function is top-level (no parent)", () => {
+    const symbols = parseGo(GO_SAMPLE, "cluster.go");
+    const ctor = symbols.find(s => s.name === "NewClusterManager")!;
+    expect(ctor).toBeDefined();
+    expect(ctor.parent_id).toBeNull();
+    expect(ctor.kind).toBe("function");
+  });
+
+  test("extracts type alias as 'type' kind", () => {
+    const symbols = parseGo(GO_SAMPLE, "cluster.go");
+    const nodeState = symbols.find(s => s.name === "NodeState");
+    expect(nodeState).toBeDefined();
+    expect(nodeState!.kind).toBe("type");
+  });
+
+  test("exported names have exported=true", () => {
+    const symbols = parseGo(GO_SAMPLE, "cluster.go");
+    const connect = symbols.find(s => s.name === "Connect")!;
+    expect(connect.exported).toBe(true);
   });
 });

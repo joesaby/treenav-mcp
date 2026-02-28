@@ -33,6 +33,7 @@ import type {
 import { parseTypeScript, TYPESCRIPT_EXTENSIONS } from "./parsers/typescript";
 import { parsePython, PYTHON_EXTENSIONS } from "./parsers/python";
 import { parseJava, JAVA_EXTENSIONS } from "./parsers/java";
+import { parseGo, GO_EXTENSIONS } from "./parsers/go";
 import { parseGeneric, GENERIC_EXTENSIONS } from "./parsers/generic";
 
 // ── Code symbol intermediate representation ──────────────────────────
@@ -69,6 +70,7 @@ export const CODE_EXTENSIONS = new Set([
   ...TYPESCRIPT_EXTENSIONS,
   ...PYTHON_EXTENSIONS,
   ...JAVA_EXTENSIONS,
+  ...GO_EXTENSIONS,
   ...GENERIC_EXTENSIONS,
 ]);
 
@@ -174,6 +176,9 @@ function parseSourceFile(source: string, docId: string, filePath: string): CodeS
   }
   if (JAVA_EXTENSIONS.has(ext)) {
     return parseJava(source, docId);
+  }
+  if (GO_EXTENSIONS.has(ext)) {
+    return parseGo(source, docId);
   }
   if (GENERIC_EXTENSIONS.has(ext)) {
     return parseGeneric(source, docId, ext);
