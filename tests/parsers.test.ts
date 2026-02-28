@@ -13,6 +13,7 @@ import { parsePython } from "../src/parsers/python";
 import { parseGeneric } from "../src/parsers/generic";
 import { parseJava } from "../src/parsers/java";
 import { parseGo } from "../src/parsers/go";
+import { parseRust } from "../src/parsers/rust";
 import type { CodeSymbol } from "../src/code-indexer";
 
 import {
@@ -1260,5 +1261,120 @@ func (s *Set[T]) Add(item T) {
     const add = symbols.find(s => s.name === "Add");
     expect(add).toBeDefined();
     expect(add!.parent_id).toBe(set!.id);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════
+// Rust Parser
+// ════════════════════════════════════════════════════════════════════
+
+describe("parseRust", () => {
+  const RUST_SAMPLE = `use std::env;
+
+pub const DEFAULT_TIMEOUT: u64 = 5000;
+
+pub enum ConfigError {
+    MissingVar(String),
+    InvalidValue(String),
+}
+
+pub struct Config {
+    pub api_key: String,
+    pub timeout_ms: u64,
+}
+
+impl Config {
+    pub fn from_env() -> Result<Self, ConfigError> {
+        let api_key = env::var("API_KEY")
+            .map_err(|_| ConfigError::MissingVar("API_KEY".to_string()))?;
+        Ok(Config { api_key, timeout_ms: DEFAULT_TIMEOUT })
+    }
+
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.api_key.is_empty() {
+            return Err(ConfigError::InvalidValue("empty key".to_string()));
+        }
+        Ok(())
+    }
+
+    fn internal_helper(&self) -> bool {
+        !self.api_key.is_empty()
+    }
+}
+
+pub trait Configurable {
+    fn configure(&self) -> Result<(), ConfigError>;
+}
+
+impl Configurable for Config {
+    fn configure(&self) -> Result<(), ConfigError> {
+        self.validate()
+    }
+}`;
+
+  test("extracts struct", () => {
+    const symbols = parseRust(RUST_SAMPLE, "config.rs");
+    const config = symbols.find(s => s.name === "Config");
+    expect(config).toBeDefined();
+    expect(config!.kind).toBe("class");
+  });
+
+  test("extracts enum", () => {
+    const symbols = parseRust(RUST_SAMPLE, "config.rs");
+    const err = symbols.find(s => s.name === "ConfigError");
+    expect(err).toBeDefined();
+    expect(err!.kind).toBe("enum");
+  });
+
+  test("extracts trait", () => {
+    const symbols = parseRust(RUST_SAMPLE, "config.rs");
+    const trait_ = symbols.find(s => s.name === "Configurable");
+    expect(trait_).toBeDefined();
+    expect(trait_!.kind).toBe("interface");
+  });
+
+  test("impl methods become children of their struct", () => {
+    const symbols = parseRust(RUST_SAMPLE, "config.rs");
+    const config = symbols.find(s => s.name === "Config")!;
+    const fromEnv = symbols.find(s => s.name === "from_env")!;
+    const validate = symbols.find(s => s.name === "validate")!;
+    expect(fromEnv).toBeDefined();
+    expect(validate).toBeDefined();
+    expect(fromEnv.parent_id).toBe(config.id);
+    expect(validate.parent_id).toBe(config.id);
+    expect(config.children_ids).toContain(fromEnv.id);
+    expect(config.children_ids).toContain(validate.id);
+  });
+
+  test("private impl method is a child but marked unexported", () => {
+    const symbols = parseRust(RUST_SAMPLE, "config.rs");
+    const helper = symbols.find(s => s.name === "internal_helper")!;
+    expect(helper).toBeDefined();
+    expect(helper.parent_id).not.toBeNull();
+    expect(helper.exported).toBe(false);
+  });
+
+  test("impl Trait for Type — methods linked to the implementing type", () => {
+    const symbols = parseRust(RUST_SAMPLE, "config.rs");
+    const configure = symbols.find(s => s.name === "configure")!;
+    const config = symbols.find(s => s.name === "Config")!;
+    expect(configure).toBeDefined();
+    expect(configure.parent_id).toBe(config.id);
+  });
+
+  test("pub const extracted as variable kind", () => {
+    const symbols = parseRust(RUST_SAMPLE, "config.rs");
+    const timeout = symbols.find(s => s.name === "DEFAULT_TIMEOUT");
+    expect(timeout).toBeDefined();
+    expect(timeout!.kind).toBe("variable");
+    expect(timeout!.exported).toBe(true);
+  });
+
+  test("exported = has pub prefix", () => {
+    const symbols = parseRust(RUST_SAMPLE, "config.rs");
+    const fromEnv = symbols.find(s => s.name === "from_env")!;
+    const helper = symbols.find(s => s.name === "internal_helper")!;
+    expect(fromEnv.exported).toBe(true);
+    expect(helper.exported).toBe(false);
   });
 });

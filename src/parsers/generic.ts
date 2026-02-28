@@ -13,7 +13,7 @@ import type { CodeSymbol } from "../code-indexer";
 
 /** Language detection from file extension */
 export const GENERIC_EXTENSIONS = new Set([
-  ".rs", ".kt", ".scala",
+  ".kt", ".scala",
   ".c", ".cpp", ".cc", ".h", ".hpp",
   ".cs", ".rb", ".swift", ".php",
   ".lua", ".r", ".R", ".sh", ".bash", ".zsh",
