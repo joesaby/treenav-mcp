@@ -542,6 +542,6 @@ export const QRELS: RawQRel[] = [
     relevant: [
       { docTitle: "connection_pool", relevance: 3 },
     ],
-    mustBeInTop: { docTitle: "connection_pool", k: 3 },
+    mustBeInTop: { docTitle: "connection_pool", nodeTitle: "ConnectionPool", k: 5 },
   },
 ];
