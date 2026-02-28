@@ -595,6 +595,46 @@ export const QRELS: RawQRel[] = [
     mustBeInTop: { docTitle: "State Management", k: 5 },
   },
 
+  // ── Data science docs (4) ────────────────────────────────────────────────────
+  {
+    id: "DS1",
+    query: "model training loss epoch pytorch",
+    category: "multi-term",
+    relevant: [
+      { docTitle: "Model Training", nodeTitle: "Training Loop", relevance: 3 },
+      { docTitle: "Model Training", relevance: 2 },
+    ],
+    mustBeInTop: { docTitle: "Model Training", nodeTitle: "Training Loop", k: 5 },
+  },
+  {
+    id: "DS2",
+    query: "checkpoint save resume model",
+    category: "multi-term",
+    relevant: [
+      { docTitle: "Model Training", nodeTitle: "Checkpointing", relevance: 3 },
+    ],
+    mustBeInTop: { docTitle: "Model Training", nodeTitle: "Checkpointing", k: 5 },
+  },
+  {
+    id: "DS3",
+    query: "feature engineering preprocessing pipeline scikit",
+    category: "multi-term",
+    relevant: [
+      { docTitle: "ML Data Pipeline", nodeTitle: "Preprocessing", relevance: 3 },
+      { docTitle: "ML Data Pipeline", nodeTitle: "Feature Engineering", relevance: 2 },
+    ],
+    mustBeInTop: { docTitle: "ML Data Pipeline", k: 3 },
+  },
+  {
+    id: "DS4",
+    query: "precision recall f1 score evaluation",
+    category: "multi-term",
+    relevant: [
+      { docTitle: "Model Training", nodeTitle: "Model Evaluation", relevance: 3 },
+    ],
+    mustBeInTop: { docTitle: "Model Training", nodeTitle: "Model Evaluation", k: 5 },
+  },
+
   // ── Infrastructure / Kubernetes docs (5) ─────────────────────────
   {
     id: "INF1",

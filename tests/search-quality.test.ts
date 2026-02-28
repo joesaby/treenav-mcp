@@ -9,7 +9,7 @@
  *   Secondary: MRR     — how quickly the first relevant result appears
  *   Hard:      Precision@1 / mustBeInTop assertions for exact-match queries
  *
- * Corpus:  12 markdown docs + 5 code files in tests/fixtures/search-quality/
+ * Corpus:  19 markdown docs + 5 code files in tests/fixtures/search-quality/
  * QRels:   ~40 queries across 7 categories in tests/fixtures/search-quality-qrels.ts
  *
  * References:
@@ -210,9 +210,9 @@ function runQuery(query: string, filter?: Record<string, string[]>, limit = 10):
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe("Corpus sanity", () => {
-  test("12 markdown documents indexed", () => {
+  test("19 markdown documents indexed", () => {
     const listing = store.listDocuments({ collection: "docs", limit: 100 });
-    expect(listing.total).toBe(12);
+    expect(listing.total).toBe(19);
   });
 
   test("8 code files indexed", () => {
