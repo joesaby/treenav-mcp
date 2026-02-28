@@ -22,11 +22,10 @@ export const GENERIC_EXTENSIONS = new Set([
 /**
  * Detect language from file extension for tuned pattern matching.
  */
-type Lang = "go" | "rust" | "java" | "c" | "ruby" | "shell" | "other";
+type Lang = "go" | "java" | "c" | "ruby" | "shell" | "other";
 
 function detectLang(ext: string): Lang {
   if (ext === ".go") return "go";
-  if (ext === ".rs") return "rust";
   if ([".kt", ".scala", ".cs"].includes(ext)) return "java";
   if ([".c", ".cpp", ".cc", ".h", ".hpp"].includes(ext)) return "c";
   if (ext === ".rb") return "ruby";
@@ -47,7 +46,6 @@ export function parseGeneric(source: string, docId: string, ext: string): CodeSy
 
   const importPatterns: Record<Lang, RegExp> = {
     go: /^(?:import\s|import\s*\()/,
-    rust: /^(?:use\s|extern\s+crate)/,
     java: /^(?:import\s|package\s)/,
     c: /^#\s*include\s/,
     ruby: /^(?:require\s|require_relative\s|include\s)/,
@@ -277,8 +275,7 @@ export function parseGeneric(source: string, docId: string, ext: string): CodeSy
 
     // --- Constant / type alias ---
     const constMatch =
-      (lang === "go" && trimmed.match(/^(?:var|const)\s+(\w+)/)) ||
-      (lang === "rust" && trimmed.match(/^(?:pub\s+)?(?:const|static|type)\s+(\w+)/));
+      (lang === "go" && trimmed.match(/^(?:var|const)\s+(\w+)/));
 
     if (constMatch) {
       const name = constMatch[1];
@@ -399,8 +396,6 @@ function isExported(line: string, lang: Lang, name: string): boolean {
   switch (lang) {
     case "go":
       return /^[A-Z]/.test(name); // Go: uppercase = exported
-    case "rust":
-      return line.includes("pub ");
     case "java":
       return line.includes("public ");
     case "ruby":

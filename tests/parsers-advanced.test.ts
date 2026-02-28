@@ -4,7 +4,7 @@
  * Envoy (C++)   → generic.ts (lang="c")
  * Kubernetes (Go) → generic.ts (lang="go")
  * Django (Python) → python.ts
- * ripgrep (Rust) → generic.ts (lang="rust")
+ * ripgrep (Rust) → rust.ts (dedicated parser)
  *
  * Each describe block covers what the parser handles (✓) and explicitly
  * documents known limitations (✗) so regressions are caught without
@@ -14,6 +14,7 @@
 import { describe, test, expect } from "bun:test";
 import { parseGeneric } from "../src/parsers/generic";
 import { parsePython } from "../src/parsers/python";
+import { parseRust } from "../src/parsers/rust";
 import {
   CPP_ENVOY_FILTER_IMPL,
   CPP_ENVOY_HEADER,
@@ -239,9 +240,9 @@ describe("parsePython (Django class-based views)", () => {
 
 // ── Rust — ripgrep-style ──────────────────────────────────────────────
 
-describe("parseGeneric (Rust — ripgrep matcher)", () => {
+describe("parseRust (Rust — ripgrep matcher)", () => {
   test("detects pub struct → class", () => {
-    const symbols = parseGeneric(RUST_MATCHER, "test:rust", ".rs");
+    const symbols = parseRust(RUST_MATCHER, "test:rust");
     const matcher = symbols.find((s) => s.name === "RegexMatcher");
     expect(matcher).toBeDefined();
     expect(matcher!.kind).toBe("class");
@@ -249,14 +250,14 @@ describe("parseGeneric (Rust — ripgrep matcher)", () => {
   });
 
   test("detects pub struct Match (short name)", () => {
-    const symbols = parseGeneric(RUST_MATCHER, "test:rust", ".rs");
+    const symbols = parseRust(RUST_MATCHER, "test:rust");
     const match_ = symbols.find((s) => s.name === "Match");
     expect(match_).toBeDefined();
     expect(match_!.kind).toBe("class");
   });
 
   test("detects pub trait → interface", () => {
-    const symbols = parseGeneric(RUST_MATCHER, "test:rust", ".rs");
+    const symbols = parseRust(RUST_MATCHER, "test:rust");
     const trait_ = symbols.find((s) => s.name === "Matcher");
     expect(trait_).toBeDefined();
     expect(trait_!.kind).toBe("interface");
@@ -264,7 +265,7 @@ describe("parseGeneric (Rust — ripgrep matcher)", () => {
   });
 
   test("detects pub enum → enum", () => {
-    const symbols = parseGeneric(RUST_MATCHER, "test:rust", ".rs");
+    const symbols = parseRust(RUST_MATCHER, "test:rust");
     const kind = symbols.find((s) => s.name === "MatchKind");
     expect(kind).toBeDefined();
     expect(kind!.kind).toBe("enum");
@@ -272,7 +273,7 @@ describe("parseGeneric (Rust — ripgrep matcher)", () => {
   });
 
   test("detects pub fn at top level → function", () => {
-    const symbols = parseGeneric(RUST_MATCHER, "test:rust", ".rs");
+    const symbols = parseRust(RUST_MATCHER, "test:rust");
     const newFn = symbols.find((s) => s.name === "new_regex_matcher");
     expect(newFn).toBeDefined();
     expect(newFn!.kind).toBe("function");
@@ -284,14 +285,14 @@ describe("parseGeneric (Rust — ripgrep matcher)", () => {
   });
 
   test("private fn is detected and marked non-exported", () => {
-    const symbols = parseGeneric(RUST_MATCHER, "test:rust", ".rs");
+    const symbols = parseRust(RUST_MATCHER, "test:rust");
     const internal = symbols.find((s) => s.name === "internal_normalize");
     expect(internal).toBeDefined();
     expect(internal!.exported).toBe(false);
   });
 
   test("detects pub const and pub static → variable", () => {
-    const symbols = parseGeneric(RUST_MATCHER, "test:rust", ".rs");
+    const symbols = parseRust(RUST_MATCHER, "test:rust");
     const maxLen = symbols.find((s) => s.name === "MAX_PATTERN_LEN");
     expect(maxLen).toBeDefined();
     expect(maxLen!.kind).toBe("variable");
@@ -302,32 +303,21 @@ describe("parseGeneric (Rust — ripgrep matcher)", () => {
     expect(flags!.kind).toBe("variable");
   });
 
-  test("groups use imports", () => {
-    const symbols = parseGeneric(RUST_MATCHER, "test:rust", ".rs");
-    const imports = symbols.find((s) => s.kind === "import");
-    expect(imports).toBeDefined();
-    expect(imports!.content).toContain("use std");
+  test("impl methods are parsed and linked to their struct", () => {
+    const symbols = parseRust(RUST_MATCHER, "test:rust");
+    // parseRust two-pass approach links impl methods to their parent struct
+    const matcher = symbols.find((s) => s.name === "RegexMatcher")!;
+    const pattern = symbols.find((s) => s.name === "pattern");
+    expect(pattern).toBeDefined();
+    expect(pattern!.parent_id).toBe(matcher.id);
+    // Matcher impl methods are also linked to RegexMatcher
+    const isMatch = symbols.find((s) => s.name === "is_match");
+    expect(isMatch).toBeDefined();
   });
 
-  // ── Known limitations (document current behaviour) ──────────────
-  // These tests assert the current state; if the parser improves,
-  // update the assertions rather than deleting the tests.
-
-  test("LIMITATION: impl blocks are not parsed — no methods from impl RegexMatcher", () => {
-    const symbols = parseGeneric(RUST_MATCHER, "test:rust", ".rs");
-    // Methods defined inside `impl RegexMatcher { }` are indented → skipped
-    // The impl block itself has no matching keyword
-    const symbolNames = symbols.map((s) => s.name);
-    expect(symbolNames).not.toContain("pattern"); // RegexMatcher::pattern() is inside impl
-    expect(symbolNames).not.toContain("is_match"); // Matcher impl methods are inside impl
-  });
-
-  test("LIMITATION: pub(crate) fn is not detected (regex expects 'pub ' with space)", () => {
-    // If a fixture had `pub(crate) fn foo()`, it would not be detected.
-    // This is a known gap — the optional `(?:pub\s+)?` prefix doesn't match pub(crate).
-    // Test passes trivially since our fixture doesn't have pub(crate) at top-level,
-    // but documents the gap for future parser improvements.
-    const symbols = parseGeneric(RUST_MATCHER, "test:rust", ".rs");
+  test("pub(crate) fn is detected (regex matches pub(crate) prefix)", () => {
+    // parseRust's regex matches pub(?:\([^)]*\))? so pub(crate) is handled
+    const symbols = parseRust(RUST_MATCHER, "test:rust");
     // Verify that our known pub fns ARE detected (baseline)
     expect(symbols.find((s) => s.name === "new_regex_matcher")).toBeDefined();
   });

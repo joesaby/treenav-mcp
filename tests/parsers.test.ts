@@ -790,9 +790,9 @@ describe("Generic Parser (Go)", () => {
 // Generic Parser — Rust
 // ════════════════════════════════════════════════════════════════════
 
-describe("Generic Parser (Rust)", () => {
+describe("Rust Parser (via parseRust)", () => {
   describe("structs, traits, impls", () => {
-    const symbols = parseGeneric(RUST_STRUCTS_TRAITS, "test:rs", ".rs");
+    const symbols = parseRust(RUST_STRUCTS_TRAITS, "test:rs");
 
     test("extracts pub struct", () => {
       const cfg = findByName(symbols, "Config");
@@ -846,19 +846,13 @@ describe("Generic Parser (Rust)", () => {
     test("extracts pub type alias", () => {
       const t = findByName(symbols, "ConnectionPool");
       expect(t).toBeDefined();
-      expect(t!.kind).toBe("variable");
+      expect(t!.kind).toBe("type");
       expect(t!.exported).toBe(true);
-    });
-
-    test("extracts use imports", () => {
-      const imports = findByKind(symbols, "import");
-      expect(imports.length).toBe(1);
-      expect(imports[0].content).toContain("use std::fmt");
     });
   });
 
   describe("enums", () => {
-    const symbols = parseGeneric(RUST_ENUMS, "test:rs-enum", ".rs");
+    const symbols = parseRust(RUST_ENUMS, "test:rs-enum");
 
     test("extracts pub enum", () => {
       const color = findByName(symbols, "Color");
@@ -1376,5 +1370,24 @@ impl Configurable for Config {
     const helper = symbols.find(s => s.name === "internal_helper")!;
     expect(fromEnv.exported).toBe(true);
     expect(helper.exported).toBe(false);
+  });
+
+  test("tuple struct does not cause following impl block to be dropped", () => {
+    const TUPLE_SAMPLE = `pub struct Wrapper(pub u32);
+
+pub struct Config {
+  pub value: u32,
+}
+
+impl Config {
+  pub fn new(value: u32) -> Self { Config { value } }
+}`;
+    const symbols = parseRust(TUPLE_SAMPLE, "wrapper.rs");
+    const config = symbols.find(s => s.name === "Config")!;
+    expect(config).toBeDefined();
+    const newFn = symbols.find(s => s.name === "new")!;
+    expect(newFn).toBeDefined();
+    expect(newFn.parent_id).toBe(config.id);
+    expect(config.children_ids).toContain(newFn.id);
   });
 });

@@ -57,7 +57,23 @@ export function parseRust(source: string, docId: string): CodeSymbol[] {
     if (typeMatch) {
       const name = typeMatch[1];
       const kind: "class" | "enum" | "interface" = structMatch ? "class" : enumMatch ? "enum" : "interface";
-      const blockEnd = findBraceBlockEnd(lines, i);
+
+      // Handle tuple structs (struct Foo(u32)) and unit structs (struct Unit;)
+      // which have no brace block
+      let blockEnd = i;
+      if (trimmed.includes("{")) {
+        blockEnd = findBraceBlockEnd(lines, i);
+      } else {
+        // Scan for semicolon (end of tuple/unit struct)
+        while (blockEnd < lines.length - 1 && !lines[blockEnd].includes(";") && !lines[blockEnd].includes("{")) {
+          blockEnd++;
+        }
+        // If we found a {, this is actually a brace struct spanning multiple lines
+        if (blockEnd < lines.length && lines[blockEnd].includes("{")) {
+          blockEnd = findBraceBlockEnd(lines, blockEnd);
+        }
+      }
+
       counter++;
       const id = `${docId}:n${counter}`;
       typeIds.set(name, id);
@@ -86,7 +102,17 @@ export function parseRust(source: string, docId: string): CodeSymbol[] {
 
     // Skip already-parsed struct/enum/trait declarations
     if (trimmed.match(/^(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum|trait)\s+\w+/)) {
-      i = findBraceBlockEnd(lines, i);
+      if (trimmed.includes("{")) {
+        i = findBraceBlockEnd(lines, i);
+      } else {
+        // Scan to semicolon or opening brace for multi-line declarations
+        while (i < lines.length - 1 && !lines[i].includes(";") && !lines[i].includes("{")) {
+          i++;
+        }
+        if (i < lines.length && lines[i].includes("{")) {
+          i = findBraceBlockEnd(lines, i);
+        }
+      }
       continue;
     }
 
