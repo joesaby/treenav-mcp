@@ -483,4 +483,65 @@ export const QRELS: RawQRel[] = [
     ],
     mustBeInTop: { docTitle: "UserService", nodeTitle: "ChangePasswordAsync", k: 5 },
   },
+
+  // ── Ruby code symbols (3) ────────────────────────────────────────
+  {
+    id: "RB1",
+    query: "OrderProcessor process cancel",
+    category: "code-symbol",
+    relevant: [
+      { docTitle: "order_processor", nodeTitle: "process", relevance: 3 },
+      { docTitle: "order_processor", nodeTitle: "cancel", relevance: 2 },
+      { docTitle: "order_processor", relevance: 2 },
+    ],
+    mustBeInTop: { docTitle: "order_processor", nodeTitle: "process", k: 5 },
+  },
+  {
+    id: "RB2",
+    query: "InsufficientInventoryError inventory",
+    category: "code-symbol",
+    relevant: [
+      { docTitle: "order_processor", nodeTitle: "InsufficientInventoryError", relevance: 3 },
+    ],
+    mustBeInTop: { docTitle: "order_processor", nodeTitle: "InsufficientInventoryError", k: 5 },
+  },
+  {
+    id: "RB3",
+    query: "discount calculate total order",
+    category: "multi-term",
+    relevant: [
+      { docTitle: "order_processor", nodeTitle: "calculate_total", relevance: 3 },
+    ],
+  },
+
+  // ── C++ code symbols (3) ──────────────────────────────────────────
+  {
+    id: "CPP1",
+    query: "ConnectionPool acquire release",
+    category: "code-symbol",
+    relevant: [
+      { docTitle: "connection_pool", nodeTitle: "acquire", relevance: 3 },
+      { docTitle: "connection_pool", nodeTitle: "release", relevance: 2 },
+      { docTitle: "connection_pool", relevance: 2 },
+    ],
+    mustBeInTop: { docTitle: "connection_pool", nodeTitle: "acquire", k: 5 },
+  },
+  {
+    id: "CPP2",
+    query: "ConnectionPoolError exception",
+    category: "code-symbol",
+    relevant: [
+      { docTitle: "connection_pool", nodeTitle: "ConnectionPoolError", relevance: 3 },
+    ],
+    mustBeInTop: { docTitle: "connection_pool", nodeTitle: "ConnectionPoolError", k: 5 },
+  },
+  {
+    id: "CPP3",
+    query: "database connection pool thread safe",
+    category: "multi-term",
+    relevant: [
+      { docTitle: "connection_pool", relevance: 3 },
+    ],
+    mustBeInTop: { docTitle: "connection_pool", k: 3 },
+  },
 ];

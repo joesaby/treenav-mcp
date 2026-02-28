@@ -215,9 +215,9 @@ describe("Corpus sanity", () => {
     expect(listing.total).toBe(12);
   });
 
-  test("5 code files indexed", () => {
+  test("8 code files indexed", () => {
     const listing = store.listDocuments({ collection: "code", limit: 100 });
-    expect(listing.total).toBe(5);
+    expect(listing.total).toBe(8);
   });
 
   test("markdown documents have correct facet types", () => {
@@ -235,6 +235,11 @@ describe("Corpus sanity", () => {
     expect(langs.has("java")).toBe(true);
     expect(langs.has("python")).toBe(true);
     expect(langs.has("typescript")).toBe(true);
+    expect(langs.has("go")).toBe(true);
+    expect(langs.has("rust")).toBe(true);
+    expect(langs.has("cpp")).toBe(true);
+    expect(langs.has("csharp")).toBe(true);
+    expect(langs.has("ruby")).toBe(true);
   });
 
   test("all QRel docTitles resolve to a real document", () => {
@@ -615,6 +620,74 @@ describe("Tree Navigation — N8: Cross-collection search", () => {
     const tree = store.getTree(docId!);
     expect(tree).not.toBeNull();
     expect(tree!.nodes.length).toBeGreaterThan(0);
+  });
+});
+
+describe("Tree Navigation — N9: Go struct → receiver methods", () => {
+  test("search 'ClusterManager' surfaces cluster code file", () => {
+    const results = store.searchDocuments("ClusterManager", { limit: 5, collection: "code" });
+    const docId = findDocId("cluster");
+    expect(docId).not.toBeNull();
+    expect(results.some(r => r.doc_id === docId)).toBe(true);
+  });
+
+  test("get_tree returns ClusterManager with receiver methods as children", () => {
+    const docId = findDocId("cluster")!;
+    const tree = store.getTree(docId)!;
+    expect(tree).not.toBeNull();
+    // ClusterManager should exist as a class node
+    const clusterNode = tree.nodes.find(n => n.title.includes("ClusterManager") && !n.title.includes("Interface"));
+    expect(clusterNode).toBeDefined();
+    // Connect, Disconnect, GetNode should be children of ClusterManager
+    const childTitles = tree.nodes
+      .filter(n => clusterNode!.children.includes(n.node_id))
+      .map(n => n.title);
+    expect(childTitles.some(t => t.includes("Connect"))).toBe(true);
+    expect(childTitles.some(t => t.includes("Disconnect"))).toBe(true);
+    expect(childTitles.some(t => t.includes("GetNode"))).toBe(true);
+  });
+
+  test("Connect method is reachable by node ID", () => {
+    const docId = findDocId("cluster")!;
+    const clusterNodeId = findNodeId(docId, "ClusterManager");
+    const connectNodeId = findNodeId(docId, "Connect");
+    expect(clusterNodeId).not.toBeNull();
+    expect(connectNodeId).not.toBeNull();
+    const tree = store.getTree(docId)!;
+    const clusterNode = tree.nodes.find(n => n.node_id === clusterNodeId)!;
+    expect(clusterNode.children).toContain(connectNodeId);
+  });
+});
+
+describe("Tree Navigation — N10: Rust struct → impl methods", () => {
+  test("search 'Config from_env' surfaces config code file", () => {
+    const results = store.searchDocuments("Config from_env", { limit: 5, collection: "code" });
+    const docId = findDocId("config");
+    expect(docId).not.toBeNull();
+    expect(results.some(r => r.doc_id === docId)).toBe(true);
+  });
+
+  test("get_tree returns Config with from_env and validate as children", () => {
+    const docId = findDocId("config")!;
+    const tree = store.getTree(docId)!;
+    expect(tree).not.toBeNull();
+    const configNode = tree.nodes.find(n => n.title.includes("Config") && !n.title.includes("Error"));
+    expect(configNode).toBeDefined();
+    const childTitles = tree.nodes
+      .filter(n => configNode!.children.includes(n.node_id))
+      .map(n => n.title);
+    expect(childTitles.some(t => t.includes("from_env"))).toBe(true);
+    expect(childTitles.some(t => t.includes("validate"))).toBe(true);
+  });
+
+  test("from_env method node returns content with API_KEY", () => {
+    const docId = findDocId("config")!;
+    const nodeId = findNodeId(docId, "from_env")!;
+    expect(nodeId).not.toBeNull();
+    const result = store.getNodeContent(docId, [nodeId]);
+    expect(result).not.toBeNull();
+    expect(result!.nodes[0].content).toContain("from_env");
+    expect(result!.nodes[0].content).toContain("API_KEY");
   });
 });
 
