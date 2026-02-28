@@ -544,4 +544,105 @@ export const QRELS: RawQRel[] = [
     ],
     mustBeInTop: { docTitle: "connection_pool", nodeTitle: "ConnectionPool", k: 5 },
   },
+
+  // ── Frontend / React docs (5) ─────────────────────────────────────────────
+  {
+    id: "FE1",
+    query: "react component props composition",
+    category: "exact",
+    relevant: [
+      { docTitle: "Component Architecture", relevance: 3 },
+      { docTitle: "Component Architecture", nodeTitle: "Component Types", relevance: 2 },
+    ],
+    mustBeInTop: { docTitle: "Component Architecture", k: 3 },
+  },
+  {
+    id: "FE2",
+    query: "zustand state store cart",
+    category: "multi-term",
+    relevant: [
+      { docTitle: "State Management", nodeTitle: "Zustand", relevance: 3 },
+      { docTitle: "State Management", relevance: 2 },
+    ],
+    mustBeInTop: { docTitle: "State Management", nodeTitle: "Zustand", k: 5 },
+  },
+  {
+    id: "FE3",
+    query: "useFetch data loading error",
+    category: "multi-term",
+    relevant: [
+      { docTitle: "Custom Hooks", nodeTitle: "useFetch", relevance: 3 },
+    ],
+    mustBeInTop: { docTitle: "Custom Hooks", nodeTitle: "useFetch", k: 5 },
+  },
+  {
+    id: "FE4",
+    query: "debounce delay user input",
+    category: "synonym",
+    relevant: [
+      { docTitle: "Custom Hooks", nodeTitle: "useDebounce", relevance: 3 },
+    ],
+    mustBeInTop: { docTitle: "Custom Hooks", k: 5 },
+  },
+  {
+    id: "FE5",
+    query: "state management guide",
+    category: "facet-filtered",
+    filter: { type: ["guide"] },
+    relevant: [
+      { docTitle: "State Management", relevance: 3 },
+    ],
+    mustBeInTop: { docTitle: "State Management", k: 5 },
+  },
+
+  // ── Infrastructure / Kubernetes docs (5) ─────────────────────────
+  {
+    id: "INF1",
+    query: "kubernetes rolling update deployment",
+    category: "exact",
+    relevant: [
+      { docTitle: "Kubernetes Operations", relevance: 3 },
+      { docTitle: "Kubernetes Operations", nodeTitle: "Rolling Update", relevance: 3 },
+    ],
+    mustBeInTop: { docTitle: "Kubernetes Operations", nodeTitle: "Rolling Update", k: 3 },
+  },
+  {
+    id: "INF2",
+    query: "horizontal pod autoscaling cpu replicas",
+    category: "multi-term",
+    relevant: [
+      { docTitle: "Kubernetes Operations", nodeTitle: "Horizontal Pod Autoscaling", relevance: 3 },
+    ],
+    mustBeInTop: { docTitle: "Kubernetes Operations", nodeTitle: "Horizontal Pod Autoscaling", k: 5 },
+  },
+  {
+    id: "INF3",
+    query: "prometheus metrics grafana dashboard error rate",
+    category: "multi-term",
+    relevant: [
+      { docTitle: "Monitoring and Alerting", nodeTitle: "Grafana Dashboards", relevance: 3 },
+      { docTitle: "Monitoring and Alerting", relevance: 2 },
+    ],
+    mustBeInTop: { docTitle: "Monitoring and Alerting", k: 3 },
+  },
+  {
+    id: "INF4",
+    query: "liveness probe readiness health check",
+    category: "discriminating",
+    relevant: [
+      { docTitle: "Kubernetes Operations", nodeTitle: "Liveness Probe", relevance: 3 },
+      { docTitle: "Kubernetes Operations", nodeTitle: "Readiness Probe", relevance: 2 },
+    ],
+    mustBeInTop: { docTitle: "Kubernetes Operations", nodeTitle: "Liveness Probe", k: 5 },
+  },
+  {
+    id: "INF5",
+    query: "infrastructure runbook kubernetes",
+    category: "facet-filtered",
+    filter: { type: ["runbook"] },
+    relevant: [
+      { docTitle: "Kubernetes Operations", relevance: 3 },
+    ],
+    mustBeInTop: { docTitle: "Kubernetes Operations", k: 3 },
+  },
 ];
