@@ -40,7 +40,8 @@ export function parseGo(source: string, docId: string): CodeSymbol[] {
     if (!trimmed || trimmed.startsWith("//")) continue;
 
     // type X struct { ... }  or  type X interface { ... }
-    const typeMatch = trimmed.match(/^type\s+(\w+)\s+(struct|interface)\b/);
+    // Also handles Go 1.18+ generics: type Set[T comparable] struct { ... }
+    const typeMatch = trimmed.match(/^type\s+(\w+)(?:\[[^\]]*\])?\s+(struct|interface)\b/);
     if (typeMatch) {
       const name = typeMatch[1];
       const kind: CodeSymbol["kind"] = typeMatch[2] === "struct" ? "class" : "interface";
@@ -96,7 +97,7 @@ export function parseGo(source: string, docId: string): CodeSymbol[] {
     // Skip type declarations (already processed in pass 1)
     if (/^type\s+\w+/.test(trimmed)) {
       // If the type has a brace block body, skip past it
-      if (trimmed.match(/^type\s+\w+\s+(struct|interface)\b/)) {
+      if (trimmed.match(/^type\s+\w+(?:\[[^\]]*\])?\s+(struct|interface)\b/)) {
         i = findBraceBlockEnd(lines, i);
       }
       continue;
@@ -114,7 +115,8 @@ export function parseGo(source: string, docId: string): CodeSymbol[] {
     if (trimmed.startsWith("package ")) continue;
 
     // ── func (recv *Type) Method(...) — receiver method ────────────
-    const methodMatch = trimmed.match(/^func\s+\(\s*\w+\s+\*?(\w+)\s*\)\s+(\w+)\s*\(/);
+    // Also handles generic receivers: func (s *Set[T]) Add(...)
+    const methodMatch = trimmed.match(/^func\s+\(\s*\w+\s+\*?(\w+)(?:\[[^\]]*\])?\s*\)\s+(\w+)\s*\(/);
     if (methodMatch) {
       const receiverType = methodMatch[1];
       const name = methodMatch[2];

@@ -1242,4 +1242,23 @@ func (cm *ClusterManager) activeNodes() []string {
     const connect = symbols.find(s => s.name === "Connect")!;
     expect(connect.exported).toBe(true);
   });
+
+  test("generic struct type parameter is handled correctly", () => {
+    const GENERIC_SAMPLE = `package example
+
+type Set[T comparable] struct {
+  items map[T]struct{}
+}
+
+func (s *Set[T]) Add(item T) {
+  s.items[item] = struct{}{}
+}`;
+    const symbols = parseGo(GENERIC_SAMPLE, "set.go");
+    const set = symbols.find(s => s.name === "Set");
+    expect(set).toBeDefined();
+    expect(set!.kind).toBe("class");
+    const add = symbols.find(s => s.name === "Add");
+    expect(add).toBeDefined();
+    expect(add!.parent_id).toBe(set!.id);
+  });
 });
