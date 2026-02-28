@@ -139,7 +139,7 @@ export function parseGeneric(source: string, docId: string, ext: string): CodeSy
 
     // --- Interface / trait ---
     const ifaceMatch =
-      trimmed.match(/^(?:pub\s+)?(?:export\s+)?(?:interface|trait|protocol)\s+(\w+)/) ||
+      trimmed.match(/^(?:(?:pub(?:lic)?|export)\s+)?(?:interface|trait|protocol)\s+(\w+)/) ||
       (lang === "go" && trimmed.match(/^type\s+(\w+)\s+interface\b/));
 
     if (ifaceMatch) {
@@ -335,7 +335,7 @@ function parseGenericMembers(
       trimmed.match(/^(?:pub\s+)?(?:(?:async\s+)?fn|func|function|def)\s+(\w+)\s*\(/) ||
       (lang === "go" && trimmed.match(/^func\s+(\w+)\s*\(/)) ||
       (lang === "ruby" && trimmed.match(/^def\s+(\w+)/)) ||
-      (lang === "java" && trimmed.match(/^(?:(?:public|private|protected|static|final|abstract|synchronized|native|override)\s+)*\w+(?:\s*<[^>]*>)?\s+(\w+)\s*\(/));
+      (lang === "java" && trimmed.match(/^(?:(?:public|private|protected|static|final|abstract|synchronized|native|override|async|await)\s+)*\w+(?:\s*<[^>]*>)?\s+(\w+)\s*\(/));
 
     if (methodMatch) {
       const name = methodMatch[1];

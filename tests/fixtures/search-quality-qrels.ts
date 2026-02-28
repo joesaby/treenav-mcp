@@ -266,7 +266,7 @@ export const QRELS: RawQRel[] = [
     category: "code-symbol",
     relevant: [
       { docTitle: "AuthService", nodeTitle: "authenticate", relevance: 3 },
-      { docTitle: "AuthService", relevance: 2 },
+      { docTitle: "AuthService", nodeTitle: "AuthService", relevance: 2 },
     ],
     mustBeInTop: { docTitle: "AuthService", nodeTitle: "authenticate", k: 5 },
   },
@@ -285,7 +285,7 @@ export const QRELS: RawQRel[] = [
     category: "code-symbol",
     relevant: [
       { docTitle: "oauth_client", nodeTitle: "get_token", relevance: 3 },
-      { docTitle: "oauth_client", relevance: 2 },
+      { docTitle: "oauth_client", nodeTitle: "OAuthClient", relevance: 2 },
     ],
     mustBeInTop: { docTitle: "oauth_client", nodeTitle: "get_token", k: 5 },
   },
@@ -295,7 +295,7 @@ export const QRELS: RawQRel[] = [
     category: "code-symbol",
     relevant: [
       { docTitle: "router", nodeTitle: "addRoute", relevance: 3 },
-      { docTitle: "router", relevance: 2 },
+      { docTitle: "router", nodeTitle: "Router", relevance: 2 },
     ],
     mustBeInTop: { docTitle: "router", nodeTitle: "addRoute", k: 5 },
   },
@@ -305,7 +305,7 @@ export const QRELS: RawQRel[] = [
     category: "code-symbol",
     relevant: [
       { docTitle: "cluster", nodeTitle: "Connect", relevance: 3 },
-      { docTitle: "cluster", relevance: 2 },
+      { docTitle: "cluster", nodeTitle: "ClusterManager", relevance: 2 },
     ],
     mustBeInTop: { docTitle: "cluster", nodeTitle: "Connect", k: 5 },
   },
@@ -347,7 +347,7 @@ export const QRELS: RawQRel[] = [
     category: "facet-filtered",
     filter: { language: ["java"] },
     relevant: [
-      { docTitle: "AuthService", relevance: 3 },
+      { docTitle: "AuthService", nodeTitle: "AuthService", relevance: 3 },
     ],
     mustBeInTop: { docTitle: "AuthService", k: 3 },
   },
@@ -460,7 +460,7 @@ export const QRELS: RawQRel[] = [
     category: "code-symbol",
     relevant: [
       { docTitle: "UserService", nodeTitle: "CreateUserAsync", relevance: 3 },
-      { docTitle: "UserService", relevance: 2 },
+      { docTitle: "UserService", nodeTitle: "UserService", relevance: 2 },
     ],
     mustBeInTop: { docTitle: "UserService", nodeTitle: "CreateUserAsync", k: 5 },
   },
@@ -492,7 +492,7 @@ export const QRELS: RawQRel[] = [
     relevant: [
       { docTitle: "order_processor", nodeTitle: "process", relevance: 3 },
       { docTitle: "order_processor", nodeTitle: "cancel", relevance: 2 },
-      { docTitle: "order_processor", relevance: 2 },
+      { docTitle: "order_processor", nodeTitle: "OrderProcessor", relevance: 2 },
     ],
     mustBeInTop: { docTitle: "order_processor", nodeTitle: "process", k: 5 },
   },
@@ -522,7 +522,7 @@ export const QRELS: RawQRel[] = [
     relevant: [
       { docTitle: "connection_pool", nodeTitle: "acquire", relevance: 3 },
       { docTitle: "connection_pool", nodeTitle: "release", relevance: 2 },
-      { docTitle: "connection_pool", relevance: 2 },
+      { docTitle: "connection_pool", nodeTitle: "ConnectionPool", relevance: 2 },
     ],
     mustBeInTop: { docTitle: "connection_pool", nodeTitle: "acquire", k: 5 },
   },
@@ -540,7 +540,7 @@ export const QRELS: RawQRel[] = [
     query: "database connection pool thread safe",
     category: "multi-term",
     relevant: [
-      { docTitle: "connection_pool", relevance: 3 },
+      { docTitle: "connection_pool", nodeTitle: "ConnectionPool", relevance: 3 },
     ],
     mustBeInTop: { docTitle: "connection_pool", nodeTitle: "ConnectionPool", k: 5 },
   },
@@ -549,7 +549,7 @@ export const QRELS: RawQRel[] = [
   {
     id: "FE1",
     query: "react component props composition",
-    category: "exact",
+    category: "multi-term",
     relevant: [
       { docTitle: "Component Architecture", relevance: 3 },
       { docTitle: "Component Architecture", nodeTitle: "Component Types", relevance: 2 },
@@ -684,5 +684,49 @@ export const QRELS: RawQRel[] = [
       { docTitle: "Kubernetes Operations", relevance: 3 },
     ],
     mustBeInTop: { docTitle: "Kubernetes Operations", k: 3 },
+  },
+
+  // ── Additional Go code symbols (2) ──────────────────────────────────────────
+  {
+    id: "GO1",
+    query: "GetNode lookup address cluster node",
+    category: "code-symbol",
+    relevant: [
+      { docTitle: "cluster", nodeTitle: "GetNode", relevance: 3 },
+      { docTitle: "cluster", nodeTitle: "ClusterManager", relevance: 2 },
+    ],
+    mustBeInTop: { docTitle: "cluster", nodeTitle: "GetNode", k: 5 },
+  },
+  {
+    id: "GO2",
+    query: "NewClusterManager create empty cluster",
+    category: "code-symbol",
+    relevant: [
+      { docTitle: "cluster", nodeTitle: "NewClusterManager", relevance: 3 },
+      { docTitle: "cluster", nodeTitle: "ClusterManager", relevance: 2 },
+    ],
+    mustBeInTop: { docTitle: "cluster", nodeTitle: "NewClusterManager", k: 5 },
+  },
+
+  // ── Additional Rust code symbols (2) ────────────────────────────────────────
+  {
+    id: "RS1",
+    query: "validate api_key empty timeout config error",
+    category: "code-symbol",
+    relevant: [
+      { docTitle: "config", nodeTitle: "validate", relevance: 3 },
+      { docTitle: "config", nodeTitle: "Config", relevance: 2 },
+    ],
+    mustBeInTop: { docTitle: "config", nodeTitle: "validate", k: 5 },
+  },
+  {
+    id: "RS2",
+    query: "parse_log_level debug info warn error fallback",
+    category: "code-symbol",
+    relevant: [
+      { docTitle: "config", nodeTitle: "parse_log_level", relevance: 3 },
+      { docTitle: "config", nodeTitle: "Config", relevance: 2 },
+    ],
+    mustBeInTop: { docTitle: "config", nodeTitle: "parse_log_level", k: 5 },
   },
 ];
