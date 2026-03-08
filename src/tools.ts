@@ -9,6 +9,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { DocumentStore } from "./store";
+import { formatSearchResults } from "./search-formatter.js";
 
 /**
  * Register all treenav-mcp tools and resources on the given MCP server.
@@ -100,33 +101,8 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     },
     async ({ query, doc_id, filters, limit }) => {
       const results = store.searchDocuments(query, { limit, doc_id, filters });
-
-      if (results.length === 0) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `No results found for "${query}". Try broader terms or use list_documents to browse the catalog.`,
-            },
-          ],
-        };
-      }
-
-      const formatted = results
-        .map(
-          (r, i) =>
-            `${i + 1}. [${r.doc_id}] ${r.doc_title}\n   Section: ${r.node_title} (${r.node_id})\n   Score: ${r.score.toFixed(1)}\n   Snippet: ${r.snippet}`
-        )
-        .join("\n\n");
-
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `Search results for "${query}" (${results.length} matches):\n\n${formatted}\n\nUse get_tree(doc_id) to see the full structure, or get_node_content(doc_id, [node_id]) to read a specific section.`,
-          },
-        ],
-      };
+      const text = formatSearchResults(results, store, query);
+      return { content: [{ type: "text" as const, text }] };
     }
   );
 
