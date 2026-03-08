@@ -277,6 +277,7 @@ export async function indexCodeFile(
     content_hash,
     collection: collectionName,
     facets,
+    references: [], // Code files don't have markdown links
   };
 
   return { meta, tree, root_nodes };

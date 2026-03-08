@@ -24,6 +24,7 @@ import type {
   FacetCounts,
 } from "./types";
 import { DEFAULT_RANKING } from "./types";
+import { extractGlossaryEntries } from "./indexer";
 
 export class DocumentStore {
   private docs: Map<string, IndexedDocument> = new Map();
@@ -74,10 +75,12 @@ export class DocumentStore {
 
     this.buildIndex();
     this.buildFilterIndex();
+    this.buildAutoGlossary(documents);
 
     console.log(
       `Store loaded: ${this.docs.size} docs, ${this.totalNodes} nodes, ` +
         `${this.index.size} terms, ${this.filters.size} facet keys, ` +
+        `${this.glossary.size} glossary mappings, ` +
         `avg node length: ${this.avgNodeLength.toFixed(0)} tokens`
     );
   }
@@ -197,6 +200,75 @@ export class DocumentStore {
       }
     }
     return [...expanded];
+  }
+
+  // ── Auto-glossary from content ────────────────────────────────────
+  //
+  // Scan all document content for acronym definitions like
+  // "CLI (Command Line Interface)" and add them to the glossary.
+  // Does NOT overwrite entries from an explicitly loaded glossary file.
+
+  private buildAutoGlossary(documents: IndexedDocument[]): void {
+    const autoEntries: Record<string, string[]> = {};
+
+    for (const doc of documents) {
+      for (const node of doc.tree) {
+        const nodeEntries = extractGlossaryEntries(node.content);
+        for (const [acronym, expansions] of Object.entries(nodeEntries)) {
+          if (!autoEntries[acronym]) autoEntries[acronym] = [];
+          for (const exp of expansions) {
+            if (!autoEntries[acronym].includes(exp)) {
+              autoEntries[acronym].push(exp);
+            }
+          }
+        }
+      }
+      // Also check title and description
+      const metaEntries = extractGlossaryEntries(
+        `${doc.meta.title} ${doc.meta.description}`
+      );
+      for (const [acronym, expansions] of Object.entries(metaEntries)) {
+        if (!autoEntries[acronym]) autoEntries[acronym] = [];
+        for (const exp of expansions) {
+          if (!autoEntries[acronym].includes(exp)) {
+            autoEntries[acronym].push(exp);
+          }
+        }
+      }
+    }
+
+    // Merge auto-entries into the glossary without overwriting explicit entries
+    let added = 0;
+    for (const [key, expansions] of Object.entries(autoEntries)) {
+      const normalizedKey = key.toLowerCase();
+      for (const expansion of expansions) {
+        // Forward: acronym → expansion
+        if (!this.glossary.has(normalizedKey)) {
+          this.glossary.set(normalizedKey, [expansion]);
+          added++;
+        } else {
+          const existing = this.glossary.get(normalizedKey)!;
+          if (!existing.includes(expansion)) {
+            existing.push(expansion);
+            added++;
+          }
+        }
+        // Reverse: expansion terms → acronym
+        const expTokens = expansion.toLowerCase();
+        if (!this.glossary.has(expTokens)) {
+          this.glossary.set(expTokens, [normalizedKey]);
+        } else {
+          const existing = this.glossary.get(expTokens)!;
+          if (!existing.includes(normalizedKey)) {
+            existing.push(normalizedKey);
+          }
+        }
+      }
+    }
+
+    if (added > 0) {
+      console.log(`Auto-glossary: extracted ${added} entries from content`);
+    }
   }
 
   // ── Remove old postings for incremental update ──────────────────

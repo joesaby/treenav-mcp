@@ -55,10 +55,41 @@ function flushContent(state: ParseState): void {
       const text = state.content_buffer.join("\n").trim();
       node.content = text;
       node.word_count = text.split(/\s+/).filter(Boolean).length;
-      node.summary = text.slice(0, 200) + (text.length > 200 ? "…" : "");
+      node.summary = extractFirstSentence(text, 200);
     }
   }
   state.content_buffer = [];
+}
+
+// ── First-sentence summary extraction ─────────────────────────────
+//
+// Instead of blindly slicing text.slice(0, 200), extract the first
+// complete sentence. Gives the agent a meaningful breadcrumb in
+// get_tree output regardless of doc formatting quality.
+
+function extractFirstSentence(text: string, maxLen: number): string {
+  if (!text || text.length === 0) return "";
+
+  // Skip leading code blocks, tables, and list markers
+  const cleaned = text.replace(/^\[code:\w*\].*$/m, "").replace(/^\s*[-*•]\s*/m, "").trim();
+  if (!cleaned) return text.slice(0, maxLen) + (text.length > maxLen ? "…" : "");
+
+  // Find the first sentence boundary: period/question/exclamation followed by
+  // whitespace or end-of-string, but not inside abbreviations like "e.g." or "v1.2"
+  const sentenceEnd = cleaned.search(/[.!?](?:\s|$)/);
+
+  if (sentenceEnd !== -1 && sentenceEnd < maxLen) {
+    return cleaned.slice(0, sentenceEnd + 1);
+  }
+
+  // No sentence boundary found within limit — fall back to word-boundary slice
+  if (cleaned.length <= maxLen) return cleaned;
+  const truncated = cleaned.slice(0, maxLen);
+  const lastSpace = truncated.lastIndexOf(" ");
+  if (lastSpace > maxLen * 0.6) {
+    return truncated.slice(0, lastSpace) + "…";
+  }
+  return truncated + "…";
 }
 
 function findParentId(state: ParseState, level: number): string | null {
@@ -204,7 +235,7 @@ function buildTreeRegex(markdown: string, doc_id: string): TreeNode[] {
           const text = contentBuffer.join("\n").trim();
           prev.content = text;
           prev.word_count = text.split(/\s+/).filter(Boolean).length;
-          prev.summary = text.slice(0, 200);
+          prev.summary = extractFirstSentence(text, 200);
           prev.line_end = i;
         }
       }
@@ -249,7 +280,7 @@ function buildTreeRegex(markdown: string, doc_id: string): TreeNode[] {
       const text = contentBuffer.join("\n").trim();
       last.content = text;
       last.word_count = text.split(/\s+/).filter(Boolean).length;
-      last.summary = text.slice(0, 200);
+      last.summary = extractFirstSentence(text, 200);
       last.line_end = lines.length;
     }
   }
@@ -403,6 +434,139 @@ function improveGenericTitle(title: string, relPath: string): string {
   return `${parent} — ${title}`;
 }
 
+// ── Cross-reference extraction ───────────────────────────────────────
+//
+// Parse markdown links [text](target.md) to build a reference graph.
+// These are relationships the author explicitly created — free signal
+// that doesn't depend on formatting quality or frontmatter.
+
+function extractReferences(body: string, relPath: string): string[] {
+  const refs = new Set<string>();
+  // Match markdown links: [text](target) — skip external URLs and anchors
+  const linkRegex = /\[([^\]]*)\]\(([^)]+)\)/g;
+  let match;
+  while ((match = linkRegex.exec(body)) !== null) {
+    const target = match[2].split("#")[0].trim(); // strip fragment
+    if (!target) continue; // anchor-only link
+    if (/^https?:\/\//i.test(target)) continue; // external URL
+    if (/^mailto:/i.test(target)) continue;
+    if (target.startsWith("/")) {
+      // Absolute path from docs root
+      refs.add(target.replace(/^\//, ""));
+    } else {
+      // Relative path — resolve from current file's directory
+      const dir = relPath.includes("/")
+        ? relPath.substring(0, relPath.lastIndexOf("/"))
+        : "";
+      const resolved = dir ? `${dir}/${target}` : target;
+      // Normalize: collapse ../ and ./
+      refs.add(normalizePath(resolved));
+    }
+  }
+  return [...refs];
+}
+
+function normalizePath(path: string): string {
+  const parts = path.split("/");
+  const normalized: string[] = [];
+  for (const part of parts) {
+    if (part === ".") continue;
+    if (part === ".." && normalized.length > 0) {
+      normalized.pop();
+    } else if (part !== "..") {
+      normalized.push(part);
+    }
+  }
+  return normalized.join("/");
+}
+
+// ── Auto-facets from content structure ───────────────────────────────
+//
+// Extract facets from the content itself, not just frontmatter.
+// Works on any markdown file regardless of formatting quality.
+
+function extractContentFacets(body: string): Record<string, string[]> {
+  const facets: Record<string, string[]> = {};
+
+  // Detect fenced code blocks and extract languages
+  const codeBlockRegex = /```(\w+)?/g;
+  const languages = new Set<string>();
+  let hasCode = false;
+  let codeMatch;
+  while ((codeMatch = codeBlockRegex.exec(body)) !== null) {
+    hasCode = true;
+    if (codeMatch[1]) {
+      languages.add(codeMatch[1].toLowerCase());
+    }
+  }
+
+  if (hasCode) {
+    facets["has_code"] = ["true"];
+  }
+  if (languages.size > 0) {
+    facets["code_languages"] = [...languages].sort();
+  }
+
+  // Count internal links (cross-references)
+  const linkCount = (body.match(/\[[^\]]*\]\([^)]+\)/g) || [])
+    .filter(m => !/\]\(https?:\/\//i.test(m)).length;
+  if (linkCount > 0) {
+    facets["has_links"] = ["true"];
+  }
+
+  return facets;
+}
+
+// ── Auto-glossary extraction ────────────────────────────────────────
+//
+// Extract acronym definitions from content patterns like:
+//   "CLI (Command Line Interface)"
+//   "Command Line Interface (CLI)"
+//   "TLS — Transport Layer Security"
+//
+// Returns entries in glossary format: { "CLI": ["command line interface"] }
+
+export function extractGlossaryEntries(text: string): Record<string, string[]> {
+  const entries: Record<string, string[]> = {};
+
+  // Pattern 1: ACRONYM (Expansion) — e.g., "CLI (Command Line Interface)"
+  const acronymFirst = /\b([A-Z][A-Z0-9]{1,10})\s+\(([A-Z][a-zA-Z\s]{3,60})\)/g;
+  let m;
+  while ((m = acronymFirst.exec(text)) !== null) {
+    const acronym = m[1];
+    const expansion = m[2].trim().toLowerCase();
+    if (!entries[acronym]) entries[acronym] = [];
+    if (!entries[acronym].includes(expansion)) {
+      entries[acronym].push(expansion);
+    }
+  }
+
+  // Pattern 2: Expansion (ACRONYM) — e.g., "Command Line Interface (CLI)"
+  const expansionFirst = /([A-Z][a-zA-Z\s]{3,60})\s+\(([A-Z][A-Z0-9]{1,10})\)/g;
+  while ((m = expansionFirst.exec(text)) !== null) {
+    const expansion = m[1].trim().toLowerCase();
+    const acronym = m[2];
+    if (!entries[acronym]) entries[acronym] = [];
+    if (!entries[acronym].includes(expansion)) {
+      entries[acronym].push(expansion);
+    }
+  }
+
+  // Pattern 3: ACRONYM — Expansion (em dash) — e.g., "TLS — Transport Layer Security"
+  // Use a non-greedy match and stop at lowercase-to-lowercase word boundary
+  const dashPattern = /\b([A-Z][A-Z0-9]{1,10})\s*[—–-]\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*)(?:\s|[.,;]|$)/g;
+  while ((m = dashPattern.exec(text)) !== null) {
+    const acronym = m[1];
+    const expansion = m[2].trim().toLowerCase();
+    if (!entries[acronym]) entries[acronym] = [];
+    if (!entries[acronym].includes(expansion)) {
+      entries[acronym].push(expansion);
+    }
+  }
+
+  return entries;
+}
+
 // ── Content hashing (Pagefind-inspired) ─────────────────────────────
 //
 // Pagefind generates content-based fragment hashes so unchanged pages
@@ -433,6 +597,15 @@ export async function indexFile(
 
   // Extract facets from frontmatter (Pagefind data-pagefind-filter)
   const facets = extractFacets(frontmatter);
+
+  // Auto-facets from content structure (works without frontmatter)
+  const contentFacets = extractContentFacets(body);
+  for (const [key, values] of Object.entries(contentFacets)) {
+    if (!facets[key]) facets[key] = values;
+  }
+
+  // Cross-reference extraction — parse markdown links
+  const references = extractReferences(body, relPath);
 
   let title =
     (frontmatter.title as string) ||
@@ -475,6 +648,7 @@ export async function indexFile(
     content_hash,
     collection: collectionName,
     facets,
+    references,
   };
 
   return { meta, tree, root_nodes };
