@@ -74,6 +74,8 @@ export interface DocumentMeta {
   content_hash: string; // Pagefind-style content hash for incremental re-index
   collection: string; // Pagefind-style multisite collection name
   facets: Record<string, string[]>; // Pagefind-style filter facets from frontmatter
+  /** Cross-references: doc-relative paths extracted from markdown links */
+  references: string[];
 }
 
 /** Complete indexed document */
