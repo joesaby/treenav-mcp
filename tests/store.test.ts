@@ -39,6 +39,7 @@ function makeMeta(overrides: Partial<DocumentMeta> = {}): DocumentMeta {
     content_hash: "abc123",
     collection: "test",
     facets: {},
+    references: [],
     ...overrides,
   };
 }
@@ -791,6 +792,68 @@ describe("ranking parameters", () => {
     // (setRanking only affects future indexing)
     // In practice you'd reload, but we can verify the param was set
     expect(baseScore).toBeGreaterThan(0);
+  });
+});
+
+// ── resolveRef ──────────────────────────────────────────────────────
+
+describe("resolveRef", () => {
+  let store: DocumentStore;
+
+  beforeEach(() => {
+    store = new DocumentStore();
+    store.load([
+      makeDoc({
+        meta: { doc_id: "admin-guide", file_path: "docs/admin-guide.md", references: [] },
+        tree: [
+          makeNode({ node_id: "admin-guide:n1", title: "Setup", level: 1, children: [] }),
+          makeNode({ node_id: "admin-guide:n2", title: "User Provisioning", level: 2, children: [] }),
+        ],
+      }),
+      makeDoc({
+        meta: { doc_id: "user-mgmt", file_path: "docs/user-mgmt.md", references: [] },
+        tree: [makeNode({ node_id: "user-mgmt:n1", title: "Overview", level: 1, children: [] })],
+      }),
+    ]);
+  });
+
+  test("resolves file basename to doc_id", () => {
+    expect(store.resolveRef("admin-guide.md")).toEqual({ doc_id: "admin-guide" });
+  });
+
+  test("resolves relative path to doc_id", () => {
+    expect(store.resolveRef("../other/admin-guide.md")).toEqual({ doc_id: "admin-guide" });
+  });
+
+  test("resolves fragment to node_id via title slug", () => {
+    expect(store.resolveRef("admin-guide.md#user-provisioning")).toEqual({
+      doc_id: "admin-guide",
+      node_id: "admin-guide:n2",
+    });
+  });
+
+  test("resolves file with unknown fragment — returns doc_id only", () => {
+    expect(store.resolveRef("admin-guide.md#nonexistent")).toEqual({ doc_id: "admin-guide" });
+  });
+
+  test("returns null for unknown file", () => {
+    expect(store.resolveRef("unknown.md")).toBeNull();
+  });
+});
+
+describe("getDocMeta", () => {
+  test("returns meta for known doc_id", () => {
+    const store = new DocumentStore();
+    store.load([makeDoc({ meta: { doc_id: "test:doc", file_path: "doc.md", references: ["other.md"] } })]);
+    const meta = store.getDocMeta("test:doc");
+    expect(meta?.doc_id).toBe("test:doc");
+    expect(meta?.references).toEqual(["other.md"]);
+  });
+
+  test("returns null for unknown doc_id", () => {
+    const store = new DocumentStore();
+    store.load([]);
+    expect(store.getDocMeta("nope")).toBeNull();
   });
 });
 
