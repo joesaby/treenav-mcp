@@ -47,6 +47,19 @@ bun run serve:http       # Start HTTP MCP server (port 3100)
 DOCS_ROOT=./path bun run index  # Debug: inspect indexed output
 ```
 
+### Releases
+
+Versioning is automated via semantic-release on every push to `main`. Commit messages drive version bumps:
+
+| Prefix | Effect |
+|--------|--------|
+| `feat:` | Minor bump (0.x.0) |
+| `fix:` | Patch bump (0.0.x) |
+| `feat!:` / `BREAKING CHANGE:` | Major bump (x.0.0) |
+| `chore:`, `docs:`, `ci:`, `test:` | No release |
+
+A GitHub Release is created automatically with generated release notes. Docker Hub is updated with both `:latest` and `:<version>` tags only when a release is published.
+
 ### Environment Variables
 
 | Variable | Default | Description |
