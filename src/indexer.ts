@@ -403,6 +403,44 @@ function improveGenericTitle(title: string, relPath: string): string {
   return `${parent} — ${title}`;
 }
 
+// ── Auto-glossary extraction ────────────────────────────────────────
+//
+// Extract acronym definitions from content patterns like:
+//   "CLI (Command Line Interface)"
+//   "Command Line Interface (CLI)"
+//   "TLS — Transport Layer Security"
+//
+// Returns entries in glossary format: { "CLI": ["command line interface"] }
+
+export function extractGlossaryEntries(text: string): Record<string, string[]> {
+  const entries: Record<string, string[]> = {};
+
+  // Pattern 1: ACRONYM (Expansion) — e.g., "CLI (Command Line Interface)"
+  const acronymFirst = /\b([A-Z][A-Z0-9]{1,10})\s+\(([A-Z][a-zA-Z\s]{3,60})\)/g;
+  let m;
+  while ((m = acronymFirst.exec(text)) !== null) {
+    const acronym = m[1];
+    const expansion = m[2].trim().toLowerCase();
+    if (!entries[acronym]) entries[acronym] = [];
+    if (!entries[acronym].includes(expansion)) {
+      entries[acronym].push(expansion);
+    }
+  }
+
+  // Pattern 2: Expansion (ACRONYM) — e.g., "Command Line Interface (CLI)"
+  const expansionFirst = /([A-Z][a-zA-Z\s]{3,60})\s+\(([A-Z][A-Z0-9]{1,10})\)/g;
+  while ((m = expansionFirst.exec(text)) !== null) {
+    const expansion = m[1].trim().toLowerCase();
+    const acronym = m[2];
+    if (!entries[acronym]) entries[acronym] = [];
+    if (!entries[acronym].includes(expansion)) {
+      entries[acronym].push(expansion);
+    }
+  }
+
+  return entries;
+}
+
 // ── Content hashing (Pagefind-inspired) ─────────────────────────────
 //
 // Pagefind generates content-based fragment hashes so unchanged pages
