@@ -24,6 +24,7 @@ import type {
   FacetCounts,
 } from "./types";
 import { DEFAULT_RANKING } from "./types";
+import { extractGlossaryEntries } from "./indexer";
 
 export class DocumentStore {
   private docs: Map<string, IndexedDocument> = new Map();
@@ -58,6 +59,12 @@ export class DocumentStore {
   // like "CLI" also match "command line interface"
   private glossary: Map<string, string[]> = new Map();
 
+  // ── Per-document auto-glossary for incremental updates ─────────────
+  // Tracks which glossary entries came from which document so we can
+  // add/remove entries when documents change without rescanning all content.
+  private autoGlossaryByDoc: Map<string, Record<string, string[]>> = new Map();
+  private explicitGlossary: Record<string, string[]> = {};
+
   // ── Load / Refresh ──────────────────────────────────────────────
 
   load(documents: IndexedDocument[]): void {
@@ -66,6 +73,7 @@ export class DocumentStore {
     this.nodeStats.clear();
     this.filters.clear();
     this.contentHashes.clear();
+    this.autoGlossaryByDoc.clear();
 
     for (const doc of documents) {
       this.docs.set(doc.meta.doc_id, doc);
@@ -74,10 +82,12 @@ export class DocumentStore {
 
     this.buildIndex();
     this.buildFilterIndex();
+    this.buildAutoGlossary(documents);
 
     console.log(
       `Store loaded: ${this.docs.size} docs, ${this.totalNodes} nodes, ` +
         `${this.index.size} terms, ${this.filters.size} facet keys, ` +
+        `${this.glossary.size} glossary mappings, ` +
         `avg node length: ${this.avgNodeLength.toFixed(0)} tokens`
     );
   }
@@ -103,6 +113,8 @@ export class DocumentStore {
     this.contentHashes.set(doc.meta.file_path, doc.meta.content_hash);
     this.indexDocument(doc);
     this.indexDocumentFilters(doc);
+    this.extractDocAutoGlossary(doc);
+    this.rebuildMergedGlossary();
     this.recalcCorpusStats();
   }
 
@@ -126,7 +138,9 @@ export class DocumentStore {
     this.removeDocumentPostings(doc);
     this.removeDocumentFilters(doc);
     this.contentHashes.delete(doc.meta.file_path);
+    this.autoGlossaryByDoc.delete(doc_id);
     this.docs.delete(doc_id);
+    this.rebuildMergedGlossary();
     this.recalcCorpusStats();
   }
 
@@ -155,22 +169,11 @@ export class DocumentStore {
    *   { "CLI": ["command line interface"], "K8s": ["kubernetes"] }
    */
   loadGlossary(entries: Record<string, string[]>): void {
-    this.glossary.clear();
+    this.explicitGlossary = {};
     for (const [key, expansions] of Object.entries(entries)) {
-      const normalizedKey = key.toLowerCase();
-      const normalizedExpansions = expansions.map((e) => e.toLowerCase());
-
-      // Forward: abbreviation → expanded forms
-      this.glossary.set(normalizedKey, normalizedExpansions);
-
-      // Reverse: each expanded term → abbreviation
-      for (const expansion of normalizedExpansions) {
-        const existing = this.glossary.get(expansion) || [];
-        if (!existing.includes(normalizedKey)) {
-          this.glossary.set(expansion, [...existing, normalizedKey]);
-        }
-      }
+      this.explicitGlossary[key.toLowerCase()] = expansions.map((e) => e.toLowerCase());
     }
+    this.rebuildMergedGlossary();
     if (this.glossary.size > 0) {
       console.log(`Glossary loaded: ${Object.keys(entries).length} entries → ${this.glossary.size} expansion mappings`);
     }
@@ -197,6 +200,102 @@ export class DocumentStore {
       }
     }
     return [...expanded];
+  }
+
+  // ── Auto-glossary from content (incremental) ─────────────────────
+  //
+  // Extract acronym definitions per-document and store them separately
+  // so adds/removes don't require rescanning all content.
+
+  /**
+   * Extract glossary entries from a single document and store per-doc.
+   */
+  private extractDocAutoGlossary(doc: IndexedDocument): void {
+    const entries: Record<string, string[]> = {};
+
+    for (const node of doc.tree) {
+      const nodeEntries = extractGlossaryEntries(node.content);
+      for (const [acronym, expansions] of Object.entries(nodeEntries)) {
+        if (!entries[acronym]) entries[acronym] = [];
+        for (const exp of expansions) {
+          if (!entries[acronym].includes(exp)) {
+            entries[acronym].push(exp);
+          }
+        }
+      }
+    }
+    // Also check title and description
+    const metaEntries = extractGlossaryEntries(
+      `${doc.meta.title} ${doc.meta.description}`
+    );
+    for (const [acronym, expansions] of Object.entries(metaEntries)) {
+      if (!entries[acronym]) entries[acronym] = [];
+      for (const exp of expansions) {
+        if (!entries[acronym].includes(exp)) {
+          entries[acronym].push(exp);
+        }
+      }
+    }
+
+    if (Object.keys(entries).length > 0) {
+      this.autoGlossaryByDoc.set(doc.meta.doc_id, entries);
+    }
+  }
+
+  private buildAutoGlossary(documents: IndexedDocument[]): void {
+    for (const doc of documents) {
+      this.extractDocAutoGlossary(doc);
+    }
+    this.rebuildMergedGlossary();
+  }
+
+  /**
+   * Rebuild the merged glossary from explicit + all per-doc auto entries.
+   * Explicit entries win on conflict.
+   */
+  private rebuildMergedGlossary(): void {
+    this.glossary.clear();
+
+    // Merge all auto entries first
+    const merged: Record<string, string[]> = {};
+    for (const entries of this.autoGlossaryByDoc.values()) {
+      for (const [acronym, expansions] of Object.entries(entries)) {
+        const key = acronym.toLowerCase();
+        if (!merged[key]) merged[key] = [];
+        for (const exp of expansions) {
+          if (!merged[key].includes(exp)) merged[key].push(exp);
+        }
+      }
+    }
+
+    // Overlay explicit entries (they win)
+    for (const [key, expansions] of Object.entries(this.explicitGlossary)) {
+      merged[key] = expansions; // overwrite auto
+    }
+
+    // Build bidirectional glossary map
+    let count = 0;
+    for (const [key, expansions] of Object.entries(merged)) {
+      // Forward: abbreviation → expanded forms
+      this.glossary.set(key, [...expansions]);
+      count++;
+
+      // Reverse: each expanded form → abbreviation
+      for (const expansion of expansions) {
+        const existing = this.glossary.get(expansion) || [];
+        if (!existing.includes(key)) {
+          this.glossary.set(expansion, [...existing, key]);
+        }
+      }
+    }
+
+    if (count > 0) {
+      const autoCount = this.autoGlossaryByDoc.size;
+      const explicitCount = Object.keys(this.explicitGlossary).length;
+      console.log(
+        `Glossary rebuilt: ${count} entries (${autoCount} docs contributed auto, ${explicitCount} explicit)`
+      );
+    }
   }
 
   // ── Remove old postings for incremental update ──────────────────
