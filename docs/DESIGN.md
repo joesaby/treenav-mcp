@@ -17,6 +17,7 @@ document, you should go read the originals too:
 | **Universal Ctags / tree-sitter tradition** | Symbol extraction mapped to tree nodes — classes, functions, interfaces become navigable sections | [ctags.io](https://ctags.io) |
 | **Bun.markdown** (Oven) | Native CommonMark parser with render callbacks | [bun.sh](https://bun.sh/blog/bun-v1.3.8) |
 | **Astro Starlight** | The documentation framework whose Pagefind integration prompted this investigation | [starlight.astro.build](https://starlight.astro.build) |
+| **GraphRAG papers** (AGRAG, LinearRAG, E²GraphRAG, GNN-RAG, DRAG) | Entity extraction, co-occurrence graph, multi-hop traversal — all without LLM calls | [Comparative analysis](./graphrag-comparative-analysis.md) |
 
 ---
 
@@ -384,7 +385,9 @@ search layer of this project.
 4. **MCP Server** — Exposes 6 tools via `@modelcontextprotocol/sdk`:
    `list_documents`, `search_documents`, `get_tree`, `get_node_content`,
    `navigate_tree` (all work on both docs and code), plus `find_symbol`
-   for code-specific filtering by symbol kind and language.
+   for code-specific filtering by symbol kind and language. A 7th tool
+   (`traverse_entities`) for GraphRAG-inspired entity graph exploration
+   is [specified](./entity-graph-spec.md) and ready for integration.
 
 ---
 
@@ -460,6 +463,37 @@ For 900 files with 5 changes: ~50ms vs ~3s full re-index.
 Multiple DOCS_ROOT directories, each as a named collection with a weight
 multiplier. Search results are BM25-scored × collection weight. The
 `collection` facet enables scoping.
+
+---
+
+## Auto-Glossary — Incremental Acronym Discovery
+
+*Bridging the vocabulary gap between how authors define terms and how agents
+search for them.*
+
+Documents often define acronyms inline: "Configure TLS (Transport Layer
+Security)" or "Role Based Access Control (RBAC)". The auto-glossary extracts
+these definitions during indexing and feeds them into BM25 query expansion —
+so searching for "transport layer security" also matches "TLS" and vice versa.
+
+**Design decisions:**
+
+1. **Two regex patterns, not a framework.** Matches `ACRONYM (Expansion)` and
+   `Expansion (ACRONYM)`. Catches the ~80% of definitions that follow standard
+   technical writing conventions. Deliberately not using NLP libraries — the
+   LLM already knows what acronyms mean; this just helps BM25 bridge the gap.
+
+2. **Per-document tracking.** Each document's extracted entries are stored in
+   `autoGlossaryByDoc`. On `addDocument()` or `removeDocument()`, only the
+   affected document's entries are updated. No full rescan needed.
+
+3. **Explicit glossary wins.** Manual `glossary.json` entries override
+   auto-discovered ones. Domain-specific jargon ("PRFAQ" → "press release FAQ")
+   requires manual definition — auto-extraction handles only the obvious cases.
+
+4. **Clean on redeploy.** `load()` clears `autoGlossaryByDoc` before rebuilding,
+   so redeployments (K8s pod restarts) start fresh with no stale entries from
+   removed documents.
 
 ---
 
