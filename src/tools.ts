@@ -21,6 +21,7 @@ import { formatSearchResults } from "./search-formatter.js";
  *   4. get_node_content — Retrieve text from specific tree nodes
  *   5. navigate_tree    — Get a subtree (node + all descendants)
  *   6. find_symbol      — Code-aware symbol search
+ *   7. get_related      — Cross-reference graph (outlinks + backlinks)
  *
  * Resources:
  *   - index-stats (md-tree://stats) — JSON index statistics
@@ -311,6 +312,58 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
             text: `Symbol search for "${query}" (${results.length} matches):\n\n${formatted}\n\nUse get_tree(doc_id) to see the full file structure, or get_node_content(doc_id, [node_id]) to read a symbol's source code.`,
           },
         ],
+      };
+    }
+  );
+
+  // ── Tool 7: get_related ──────────────────────────────────────────────
+
+  server.tool(
+    "get_related",
+    "Get documents related to a given document via cross-references. Returns outlinks (documents this one links to) and backlinks (documents that link to this one). Use this for lateral navigation — after reading a document, discover related content the author explicitly connected.",
+    {
+      doc_id: z
+        .string()
+        .describe("Document ID to find relationships for"),
+    },
+    async ({ doc_id }) => {
+      const related = store.getRelated(doc_id);
+
+      if (!related) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Document "${doc_id}" not found. Use list_documents to see available documents.`,
+            },
+          ],
+        };
+      }
+
+      const parts: string[] = [`Related documents for: ${related.title} [${related.doc_id}]`];
+
+      if (related.outlinks.length > 0) {
+        const outList = related.outlinks
+          .map((l) => `  → [${l.doc_id}] ${l.title}`)
+          .join("\n");
+        parts.push(`\nOutlinks (this doc links to ${related.outlinks.length} doc${related.outlinks.length === 1 ? "" : "s"}):\n${outList}`);
+      } else {
+        parts.push("\nOutlinks: none");
+      }
+
+      if (related.backlinks.length > 0) {
+        const backList = related.backlinks
+          .map((l) => `  ← [${l.doc_id}] ${l.title}`)
+          .join("\n");
+        parts.push(`\nBacklinks (${related.backlinks.length} doc${related.backlinks.length === 1 ? "" : "s"} link${related.backlinks.length === 1 ? "s" : ""} here):\n${backList}`);
+      } else {
+        parts.push("\nBacklinks: none");
+      }
+
+      parts.push("\nUse get_tree(doc_id) to explore any related document's structure.");
+
+      return {
+        content: [{ type: "text" as const, text: parts.join("\n") }],
       };
     }
   );

@@ -10,6 +10,7 @@
  *   4. get_node_content - Retrieve text from specific tree nodes
  *   5. navigate_tree    - Get a subtree (node + all descendants)
  *   6. find_symbol      - Search code symbols by name/kind/language
+ *   7. get_related      - Cross-reference graph (outlinks + backlinks)
  *
  * The agent workflow:
  *   search/list → pick doc → get_tree → reason about structure →

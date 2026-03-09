@@ -44,6 +44,7 @@ export function makeMeta(overrides: Partial<DocumentMeta> = {}): DocumentMeta {
     content_hash: "abc123",
     collection: "test",
     facets: {},
+    references: [],
     ...overrides,
   };
 }

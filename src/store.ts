@@ -63,6 +63,10 @@ export class DocumentStore {
   // basename(file_path) → { doc_id, tree }
   private refMap: Map<string, { doc_id: string; tree: TreeNode[] }> = new Map();
 
+  // ── Backlink index (inverted reference graph) ─────────────────────
+  // target doc_id → Set of source doc_ids that link to it
+  private backlinks: Map<string, Set<string>> = new Map();
+
   // ── Load / Refresh ──────────────────────────────────────────────
 
   load(documents: IndexedDocument[]): void {
@@ -81,11 +85,13 @@ export class DocumentStore {
     this.buildFilterIndex();
     this.buildAutoGlossary(documents);
     this.buildRefMap();
+    this.buildBacklinks();
 
+    const backlinkCount = Array.from(this.backlinks.values()).reduce((s, set) => s + set.size, 0);
     console.log(
       `Store loaded: ${this.docs.size} docs, ${this.totalNodes} nodes, ` +
         `${this.index.size} terms, ${this.filters.size} facet keys, ` +
-        `${this.glossary.size} glossary mappings, ` +
+        `${this.glossary.size} glossary mappings, ${backlinkCount} backlinks, ` +
         `avg node length: ${this.avgNodeLength.toFixed(0)} tokens`
     );
   }
@@ -113,6 +119,7 @@ export class DocumentStore {
     this.indexDocumentFilters(doc);
     this.recalcCorpusStats();
     this.buildRefMap();
+    this.buildBacklinks();
   }
 
   /**
@@ -216,6 +223,91 @@ export class DocumentStore {
       const basename = doc.meta.file_path.split("/").pop() ?? doc.meta.file_path;
       this.refMap.set(basename, { doc_id: doc.meta.doc_id, tree: doc.tree });
     }
+  }
+
+  // ── Build backlink index (invert forward references) ──────────────
+  //
+  // For each document's outgoing references, resolve the target doc_id
+  // and record "target → source" in the backlinks map. This enables
+  // lateral navigation: "which docs link to this one?"
+
+  private buildBacklinks(): void {
+    this.backlinks.clear();
+
+    for (const doc of this.docs.values()) {
+      const sourceId = doc.meta.doc_id;
+
+      for (const ref of doc.meta.references) {
+        const resolved = this.resolveRef(ref);
+        if (!resolved) continue;
+
+        const targetId = resolved.doc_id;
+        if (targetId === sourceId) continue; // skip self-refs
+
+        if (!this.backlinks.has(targetId)) {
+          this.backlinks.set(targetId, new Set());
+        }
+        this.backlinks.get(targetId)!.add(sourceId);
+      }
+    }
+  }
+
+  // ── Get related documents (outlinks + backlinks) ──────────────────
+  //
+  // Returns forward references (outlinks) and reverse references
+  // (backlinks) for a given document. This gives agents lateral
+  // navigation — not just up/down the tree, but across to related docs.
+
+  getRelated(doc_id: string): {
+    doc_id: string;
+    title: string;
+    outlinks: { doc_id: string; title: string }[];
+    backlinks: { doc_id: string; title: string }[];
+  } | null {
+    const doc = this.docs.get(doc_id);
+    if (!doc) return null;
+
+    // Resolve forward references to doc_ids
+    const outlinks: { doc_id: string; title: string }[] = [];
+    const seenOut = new Set<string>();
+    for (const ref of doc.meta.references) {
+      const resolved = this.resolveRef(ref);
+      if (!resolved || resolved.doc_id === doc_id) continue;
+      if (seenOut.has(resolved.doc_id)) continue;
+      seenOut.add(resolved.doc_id);
+
+      const targetDoc = this.docs.get(resolved.doc_id);
+      if (targetDoc) {
+        outlinks.push({ doc_id: resolved.doc_id, title: targetDoc.meta.title });
+      }
+    }
+
+    // Collect backlinks
+    const backlinkIds = this.backlinks.get(doc_id);
+    const backlinkList: { doc_id: string; title: string }[] = [];
+    if (backlinkIds) {
+      for (const srcId of backlinkIds) {
+        const srcDoc = this.docs.get(srcId);
+        if (srcDoc) {
+          backlinkList.push({ doc_id: srcId, title: srcDoc.meta.title });
+        }
+      }
+    }
+
+    return {
+      doc_id,
+      title: doc.meta.title,
+      outlinks,
+      backlinks: backlinkList,
+    };
+  }
+
+  /**
+   * Get the inlink count for a document (number of other docs that reference it).
+   * Used as a lightweight authority signal in search ranking.
+   */
+  getInlinkCount(doc_id: string): number {
+    return this.backlinks.get(doc_id)?.size ?? 0;
   }
 
   // Scan all document content for acronym definitions like
@@ -676,6 +768,14 @@ export class DocumentStore {
         const colWeight =
           this.collectionWeights.get(doc.meta.collection) ?? 1.0;
         entry.score *= colWeight;
+
+        // Inlink authority boost: documents referenced by more other docs
+        // are likely more important. Logarithmic scaling prevents runaway
+        // scores for heavily-linked hub pages.
+        const inlinks = this.getInlinkCount(entry.doc_id);
+        if (inlinks > 0) {
+          entry.score *= 1 + Math.log2(1 + inlinks) * this.ranking.inlink_boost;
+        }
       }
     }
 

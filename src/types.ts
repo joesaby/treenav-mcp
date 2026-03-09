@@ -190,6 +190,11 @@ export interface RankingParams {
   /** Discount factor for prefix matches (0-1). Default 0.5.
    *  Pagefind handles this at the chunk-loading level; we apply as a score multiplier. */
   prefix_penalty: number;
+
+  /** Multiplier for inlink authority signal. Documents referenced by other docs
+   *  get a logarithmic boost: score *= 1 + log2(1 + inlinks) * inlink_boost.
+   *  Set to 0 to disable. Default 0.15 */
+  inlink_boost: number;
 }
 
 export const DEFAULT_RANKING: RankingParams = {
@@ -201,6 +206,7 @@ export const DEFAULT_RANKING: RankingParams = {
   term_proximity_bonus: 2.0,
   full_coverage_bonus: 5.0,
   prefix_penalty: 0.5,
+  inlink_boost: 0.15,
 };
 
 // ── Collection configuration (Pagefind multisite inspired) ──────────
