@@ -1,12 +1,12 @@
 # treenav-mcp Go Port — Phase Plan
 
-**Status:** In progress
+**Status:** Phase A (docs) — consolidation pending; code-tree decoupling pending decision
 **Branch:** `claude/rewrite-go-migration-LK31U`
-**Related:** [docs/adr/0002-typescript-to-go-migration.md](./adr/0002-typescript-to-go-migration.md)
+**Related:** [docs/adr/0002-typescript-to-go-migration.md](./adr/0002-typescript-to-go-migration.md), ADR 0003 (deprecate regex code tree) pending
 
 This document is the canonical roadmap for porting treenav-mcp from Bun/TypeScript
-to Go. Every subsequent piece of work on this branch should be traceable back to a
-phase below.
+to Go. Every subsequent piece of work on this branch should be traceable back to
+a phase below.
 
 ## Guiding principles
 
@@ -20,156 +20,258 @@ phase below.
 4. **Keep both codebases alive until cutover.** No TS file is deleted until the
    Go version passes parity on a real corpus.
 5. **Don't port bugs.** Bugs found during the port are fixed in TS first,
-   fixtures regenerated, then ported. This keeps the oracle honest.
+   fixtures regenerated, then ported.
 6. **Security boundaries get extracted and isolated.** Path containment
-   (`internal/safepath`) is the single source of truth for "is this path inside
-   this root?" and ships with its own adversarial test suite before anything
-   else touches filesystem paths.
+   (`internal/safepath`) is the single source of truth for path validation and
+   ships with its own adversarial test suite before anything else touches
+   filesystem paths.
+7. **Engine and wrapper are separable.** The BM25 / indexer / curator engine
+   lives in `pkg/treenav` (importable as a library). The MCP protocol layer
+   lives in `internal/mcp` (one consumer among potentially many). Single repo,
+   single `go.mod`, single release cadence — split into a separate repo later
+   only if external demand materializes.
+
+## Go module layout
+
+```
+treenav-mcp/
+├── go.mod                         # single module, no submodules
+├── cmd/
+│   └── treenav-mcp/
+│       └── main.go                # MCP binary entry point
+├── pkg/
+│   └── treenav/                   # PUBLIC engine library — importable by third parties
+│       ├── doc.go                 # package docs + usage examples
+│       ├── types.go               # TreeNode, IndexedDoc, DocMeta, SearchResult, …
+│       ├── store.go               # BM25 engine, facets, snippets, glossary, AddDocument
+│       ├── indexer.go             # markdown: IndexFile, BuildTree, InferTypeFromPath
+│       ├── codeindex.go           # code-indexing coordinator
+│       └── curator.go             # FindSimilar, DraftWikiEntry, WriteWikiEntry
+├── internal/                      # PRIVATE — refactor freely, no API guarantees
+│   ├── safepath/                  # path containment (security boundary)
+│   ├── fsutil/                    # file, glob, hash wrappers
+│   ├── frontmatter/               # YAML subset parser
+│   ├── tokenize/                  # tokenizer + stemmer
+│   ├── parsers/
+│   │   ├── golang/                # stdlib go/parser + go/ast (accuracy upgrade)
+│   │   ├── typescript/
+│   │   ├── python/
+│   │   ├── rust/
+│   │   ├── java/
+│   │   └── generic/
+│   ├── searchfmt/                 # search result → Markdown formatter
+│   └── mcp/                       # MCP wrapper: tools, stdio + HTTP transports
+├── testdata/
+│   ├── corpus/                    # representative markdown + code
+│   ├── fixtures/                  # JSON snapshots from the TS oracle
+│   └── adversarial-paths.json     # safepath fuzz inputs
+├── tests/
+│   └── e2e/                       # subprocess-level MCP round-trips
+├── docs/                          # consolidated — see Phase A
+├── scripts/
+│   └── dump-fixtures.ts           # TS → JSON fixture dumper
+└── .github/workflows/             # Bun + Go CI matrix
+```
+
+### Key boundaries
+
+- **`pkg/treenav`** has a stable, documented public API. External Go code can
+  import it: `import "github.com/joesaby/treenav-mcp/pkg/treenav"`. Consumers
+  could build a CLI, a REST API, a VS Code extension, or an alternative MCP
+  server with custom tools — none of which need the MCP protocol layer.
+- **`internal/`** packages are private. They can be refactored freely between
+  releases without breaking external consumers.
+- **`cmd/treenav-mcp`** is the MCP server binary. It wires `pkg/treenav`
+  (engine) and `internal/mcp` (wrapper) together.
+- Splitting `pkg/treenav` into its own repo later is a `git filter-repo`
+  operation — the layout is split-ready without committing to split today.
+
+## DocTree vs CodeTree asymmetry
+
+The engine distinguishes two content types, and the port respects the asymmetry
+rather than forcing artificial symmetry:
+
+| Capability | DocTree (markdown) | CodeTree (source) |
+|---|---|---|
+| Indexing | ✓ | ✓ |
+| BM25 search (shared engine) | ✓ | ✓ |
+| Tree navigation | ✓ | ✓ |
+| Frontmatter parsing (YAML) | ✓ | — |
+| Type inference from path | ✓ (runbooks/ → runbook) | — |
+| Glossary expansion | ✓ | ✓ |
+| **Write path / curation** | ✓ (findSimilar, draft, write) | — (read-only) |
+| YAML round-trip serialization | ✓ | — |
+| Default enablement | always on | off unless `CODE_ROOT` set |
+| Dedicated MCP tools | **5 read + 3 curation = 8** | **1** (`find_symbol`) |
+
+**DocTree has meaningfully more functionality than CodeTree.** Code indexing is
+a thin path: glob → parse → build tree → hand to the shared BM25 engine.
+Doc indexing adds frontmatter parsing, type inference, and the entire curator
+write path (639 lines in TS, 3 MCP tools, 6 error codes).
+
+**Implications for the port:**
+
+- `pkg/treenav/indexer.go` (doc) is meaningfully larger than
+  `pkg/treenav/codeindex.go` (code coordinator). Expected, not a smell.
+- `pkg/treenav/curator.go` has no codetree counterpart. A "write path for
+  code" is explicitly out of scope; if demand materializes it deserves its own
+  ADR.
+- Phase A docs cover both under `docs/indexing.md` but the asymmetry is called
+  out in that doc.
+- Phase B test distribution is lopsided toward doctree. Correct.
 
 ## Phase overview
 
 | Phase | Name | State | Output |
-|-------|------|-------|--------|
-| A | Docs & Specs | **In progress** | `docs/features/*.md`, `docs/spec/*.md`, this plan, ADR 0002 |
-| B | Red tests | Pending | `tests/go/**` red unit + e2e tests, driven by specs |
-| C | Implementation | Pending | `internal/**`, `cmd/treenav-mcp/**` — one module per PR |
-| D | Parity & cutover | Pending | Full-corpus parity run, goreleaser, v2.0.0 release |
+|---|---|---|---|
+| A | Docs & Specs | **In progress** (consolidation pending) | 8 consolidated docs + 2 ADRs |
+| B | Red tests | Pending | Three tiers: library, wrapper, e2e |
+| C | Implementation | Pending | Module-by-module in dependency order |
+| D | Parity & cutover | Pending | Full-corpus parity run + goreleaser + v2.0.0 RC |
 
 ## Phase A — Docs & Specs
 
 **Goal:** establish the written contract for every module before any code or
 test is written.
 
-Two artifact types, always paired:
+### Execution history
 
-- **`docs/features/<name>.md`** — user-facing "what and why". Go package layout,
-  public API signatures (no bodies), key behaviors, non-goals, dependencies.
-- **`docs/spec/<name>.md`** — contract-level "exactly how". Full type
-  definitions, function signatures, step-by-step behavior, error tables, edge
-  cases, parity requirements, test requirements, fixture layout.
+An initial parallel agent sprint produced 38 topic-granular files under
+`docs/features/` and `docs/spec/`. That granularity was overkill — 15,000 lines
+of docs for 5,400 lines of TS code. The consolidation pass merges them into
+**8 meaningful documents** mirroring the Go package layout, and the
+`docs/features/` and `docs/spec/` scratch directories are deleted.
 
-### Feature inventory
+### Target document set (after consolidation)
 
-Every feature listed below gets exactly one feature doc and one spec doc in
-Phase A. Owners shown are the parallel agent that will write each group.
+| Doc | Go surface | Tier |
+|---|---|---|
+| `docs/PORT-PLAN.md` | — (this file) | meta |
+| `docs/adr/0002-typescript-to-go-migration.md` | — | meta |
+| `docs/architecture.md` | cross-cutting: layering, concurrency (`sync.RWMutex`), error taxonomy, distribution (goreleaser), env contract | meta |
+| `docs/core-data-model.md` | `pkg/treenav/types.go` — TreeNode, IndexedDoc, DocMeta, SearchResult, facets | engine |
+| `docs/bm25-engine.md` | `pkg/treenav/store.go` — BM25 formula, tokenization, stemming, inverted index, facets, snippets, glossary, incremental `AddDocument` | engine |
+| `docs/indexing.md` | `pkg/treenav/indexer.go` + `pkg/treenav/codeindex.go` + `internal/parsers/*` + `internal/frontmatter` + `internal/fsutil` — both doc-tree and code-tree, asymmetry documented | engine |
+| `docs/curator.md` | `pkg/treenav/curator.go` — FindSimilar, DraftWikiEntry, WriteWikiEntry, YAML round-trip, error codes | engine |
+| `docs/safepath.md` | `internal/safepath` — path containment + 30-row adversarial input table | engine/security |
+| `docs/mcp-wrapper.md` | `internal/mcp` + `cmd/treenav-mcp` — 9 MCP tools, stdio + HTTP transports, search formatter, debug CLI subcommand | wrapper |
 
-| # | Feature | Feature doc | Spec doc | Owner |
-|---|---|---|---|---|
-| 1 | Core data model | `features/core-data-model.md` | `spec/core-data-model.md` | Foundation |
-| 2 | Safepath (path containment) | `features/safepath.md` | `spec/safepath.md` | Foundation |
-| 3 | fsutil (file, glob, hash) | `features/fsutil.md` | `spec/fsutil.md` | Foundation |
-| 4 | Frontmatter parser | `features/frontmatter.md` | `spec/frontmatter.md` | Foundation |
-| 5 | BM25 engine | `features/bm25-engine.md` | `spec/bm25-engine.md` | BM25 |
-| 6 | Glossary expansion | `features/glossary-expansion.md` | `spec/glossary-expansion.md` | BM25 |
-| 7 | Incremental index | `features/incremental-index.md` | `spec/incremental-index.md` | BM25 |
-| 8 | Markdown indexer | `features/markdown-indexer.md` | `spec/markdown-indexer.md` | Markdown |
-| 9 | Code indexer | `features/code-indexer.md` | `spec/code-indexer.md` | Code |
-| 10 | Language parsers | `features/language-parsers.md` | `spec/language-parsers.md` | Code |
-| 11 | Curator | `features/curator.md` | `spec/curator.md` | Curator |
-| 12 | MCP tools | `features/mcp-tools.md` | `spec/mcp-tools.md` | MCP |
-| 13 | MCP server (stdio + HTTP) | `features/mcp-server.md` | `spec/mcp-server.md` | MCP |
-| 14 | Search formatter | `features/search-formatter.md` | `spec/search-formatter.md` | MCP |
-| 15 | Debug CLI | `features/cli-debug.md` | `spec/cli-debug.md` | MCP |
-| 16 | Concurrency model | `features/concurrency-model.md` | `spec/concurrency-model.md` | Cross-cutting |
-| 17 | Error taxonomy | `features/error-taxonomy.md` | `spec/error-taxonomy.md` | Cross-cutting |
-| 18 | Distribution | `features/distribution.md` | `spec/distribution.md` | Cross-cutting |
-| 19 | Environment variables | `features/environment.md` | `spec/environment.md` | Cross-cutting |
+**Total: 8 docs + 2 ADRs + this plan = 11 files in `docs/`.**
 
-**Exit criteria:** every row above has both files committed; ADR 0002 is
-merged; the spec for `safepath` explicitly enumerates adversarial path inputs.
+### Missing specs handled inline during consolidation
+
+The agent sprint produced 19 feature docs but only 13 specs — the 6 missing
+specs (`bm25-engine`, `curator`, `glossary-expansion`, `incremental-index`,
+`language-parsers`, `markdown-indexer`) correspond to the parity-critical
+modules where the TS source is the authoritative oracle. These are written
+during consolidation by reading `src/store.ts`, `src/curator.ts`, `src/indexer.ts`,
+`src/code-indexer.ts`, and `src/parsers/*.ts` directly. No additional agents.
+
+**Exit criteria:** the 11 files above exist; `docs/features/` and `docs/spec/`
+scratch directories are deleted; every module's behavior is described precisely
+enough to drive a Phase B red test without reading the TS source; ADR 0002 is
+merged.
 
 ## Phase B — Red tests
 
-**Goal:** for every spec in Phase A, produce failing Go tests that encode the
-spec's behavioral and parity requirements. Tests are written in parallel,
-batched by feature group. All tests must fail initially (red) because no
-implementation exists.
+**Goal:** for every section in Phase A, produce failing Go tests. Parallelizable
+across feature groups. All tests initially red because no implementation exists.
+
+### Three test tiers
+
+1. **Library tests** — `pkg/treenav/*_test.go`. No MCP dependency. Fast, run on
+   every change. Cover BM25 parity, tokenization, indexer output, curator
+   behavior, incremental reindex, fixture-based parity against the TS oracle.
+2. **Wrapper tests** — `internal/mcp/*_test.go`. Use an in-memory transport
+   over a real `pkg/treenav` engine instance. Cover tool registration (6/9
+   gating on `WIKI_WRITE`), input schema validation, JSON serialization quirks
+   (`make([]T, 0)` vs `null`), error-to-JSON-RPC mapping.
+3. **E2E tests** — `tests/e2e/`. Spawn `cmd/treenav-mcp` as a subprocess, send
+   real JSON-RPC over stdio. Covers full-stack round-trips, corpus parity,
+   adversarial-path rejection, concurrent read/write races (under
+   `go test -race`).
 
 ### Sub-phases (parallelizable)
 
-1. **Test infrastructure** — `go.mod`, `cmd/treenav-mcp/main.go` stub,
-   `internal/` skeleton, `testdata/corpus/`, fixture dump script
-   `scripts/dump-fixtures.ts`, CI workflow that runs both `bun test` and
-   `go test ./...`.
-2. **Unit tests** — per-feature, one agent per group. Each agent reads the
-   spec doc and produces `_test.go` files at
-   `internal/<pkg>/<pkg>_test.go`. Test names map to spec bullets.
-3. **E2E tests** — the full MCP round-trip, tool registration gating, corpus
-   parity suite. Lives in `tests/e2e/` and drives the binary as a subprocess.
-4. **Adversarial suite** — path traversal fuzz for `internal/safepath`,
-   YAML round-trip, frontmatter edge cases, concurrent `addDocument` races
-   (must pass `go test -race`).
+1. **Test infrastructure** — `go.mod`, package skeletons, `testdata/corpus/`,
+   `testdata/fixtures/`, `scripts/dump-fixtures.ts` run against the corpus to
+   emit JSON snapshots, CI workflow running both `bun test` and
+   `go test -race ./...`.
+2. **Library unit tests** — per-module, driven by the consolidated specs.
+3. **Wrapper unit tests** — tool registration + gating + error mapping.
+4. **E2E tests** — subprocess round-trips + corpus parity diff.
+5. **Adversarial suite** — `safepath` fuzz (`go test -fuzz`), YAML round-trip
+   property test, concurrent `AddDocument` race test.
 
-**Exit criteria:** `go test ./...` runs and every test fails with a "not
-implemented" error (or compiles but fails assertions). No green tests. CI is
-green on the Bun side, intentionally red on the Go side.
+**Exit criteria:** `go test ./...` compiles and runs; every test fails (red)
+because nothing is implemented; CI is green on Bun, intentionally red on Go.
 
 ## Phase C — Implementation (one by one)
 
-**Goal:** turn every red test green, one module at a time, in strict
-dependency order. Each sub-phase is one PR.
+**Goal:** turn red tests green, one package at a time, in strict dependency
+order. One PR per sub-phase.
 
 ### Order
 
-1. `internal/types` — data model structs (dependency of everything)
-2. `internal/safepath` — path containment (security-critical, isolated first)
-3. `internal/fsutil` — file IO, glob, hash
-4. `internal/frontmatter` — YAML subset parser + reserved key handling
-5. `internal/tokenize` — tokenizer + stemmer (leaf of BM25)
-6. `internal/store` — BM25 inverted index, facets, scoring, snippets,
-   glossary, incremental `AddDocument`
-7. `internal/indexer` — markdown tree builder, `IndexFile`, type inference
-8. `internal/parsers/{generic,python,rust,java,typescript}` — regex parsers
-9. `internal/parsers/golang` — AST-based via stdlib `go/parser`
-10. `internal/codeindex` — multi-language coordinator
+1. `pkg/treenav/types.go` — data model (dependency of everything)
+2. `internal/safepath` — path containment (security-critical, isolated first,
+   fuzz-tested before anything depends on it)
+3. `internal/fsutil` — file IO, glob, hash wrappers
+4. `internal/frontmatter` — YAML subset parser + reserved-key handling
+5. `internal/tokenize` — tokenizer + stemmer (BM25 leaf)
+6. `pkg/treenav/store.go` — BM25 engine: inverted index, facets, scoring,
+   snippets, glossary, incremental `AddDocument`. **Highest-risk sub-phase** —
+   parity-tested against fixtures before proceeding.
+7. `pkg/treenav/indexer.go` — markdown tree builder, `IndexFile`, type inference
+8. `internal/parsers/{generic,python,rust,java,typescript}` — regex parsers,
+   parallelizable within this sub-phase
+9. `internal/parsers/golang` — stdlib `go/parser` + `go/ast` implementation
+10. `pkg/treenav/codeindex.go` — multi-language coordinator
 11. `internal/searchfmt` — result formatter
-12. `internal/curator` — `FindSimilar`, `DraftWikiEntry`, `WriteWikiEntry`
-    (uses `safepath`, `indexer`, `store`)
-13. `internal/mcp` — tool registration, `WIKI_WRITE` gating
-14. `cmd/treenav-mcp` — stdio + HTTP transports, env parsing, CLI subcommands
+12. `pkg/treenav/curator.go` — `FindSimilar`, `DraftWikiEntry`, `WriteWikiEntry`.
+    Depends on `internal/safepath`, `pkg/treenav/store`, `pkg/treenav/indexer`.
+13. `internal/mcp` — tool registration, `WIKI_WRITE` gating, stdio + HTTP
+    transports
+14. `cmd/treenav-mcp` — env parsing, CLI subcommands (`serve` default, `index`
+    debug), main entry point
 
-Each PR must leave `main` shippable: previously green tests stay green, new
-tests for the shipped module flip from red to green, unrelated tests remain
-red. No module is considered done until its fixture-parity test matches the
-TS output.
+Each PR must leave `main` shippable: previously-green tests stay green, new
+tests for the shipped module flip red → green, unrelated tests remain red.
 
-**Exit criteria:** every test from Phase B is green; `go test -race ./...`
-is clean; a full corpus run indexes and queries identically to the TS
-implementation on the chosen oracle corpus.
+**Exit criteria:** all Phase B tests green; `go test -race ./...` clean;
+full-corpus parity run matches TS on 200+ queries.
 
 ## Phase D — Parity & cutover
 
 1. **Full corpus parity run** — 200+ queries, diff top-20 results between TS
-   and Go implementations. Acceptable variance: zero rank differences on
-   identical tokenization; tied-score reshuffling allowed only when
-   explicitly tie-broken via deterministic secondary key.
+   and Go on an oracle corpus. Acceptable variance: zero rank differences on
+   identical tokenization.
 2. **Benchmarks** — indexing time, query latency, memory footprint, binary
    size. Recorded in `BENCHMARKS.md`.
-3. **Distribution** — `goreleaser.yml` for linux/darwin/windows × amd64/arm64,
-   Homebrew tap, GitHub Release, Docker image on `scratch`/`distroless`.
-4. **RC release** — tag `v2.0.0-rc.1`. Ship Go alongside TS. Solicit
-   feedback for one cycle.
-5. **Cutover** — make Go the default distribution; move TS to `legacy`
-   branch for security-only maintenance; announce in README.
+3. **Distribution** — `.goreleaser.yml` for linux/darwin/windows × amd64/arm64,
+   Homebrew tap, GitHub Release automation, Docker image on
+   `gcr.io/distroless/static-debian12` or `scratch`.
+4. **RC release** — tag `v2.0.0-rc.1`. Ship Go alongside TS for one cycle.
+5. **Cutover** — make Go the default; move TS to `legacy` branch for
+   security-only maintenance; update README.
 
-## Scope note: the curator feature
+## Scope note: the curator feature (write path)
 
-The wiki curation feature (PR #9) lands in the port as a first-class module,
-not an afterthought. Its write path introduces four concerns that didn't
-exist in the read-only port:
+The wiki curation feature (PR #9, `docs/adr/0001-llm-curated-wiki.md`)
+introduces four concerns the read-only port didn't need:
 
-- **Path containment** — extracted into its own `internal/safepath` package
-  so the security boundary is reviewable in isolation.
-- **YAML round-trip** — `internal/curator.SerializeMarkdown` must emit bytes
-  that `internal/indexer.IndexFile` parses back losslessly. Enforced by a
-  round-trip property test.
-- **Concurrency** — stdio MCP handlers may run on separate goroutines in Go
-  (unlike Bun's single-threaded model). `internal/store` guards its index
-  with `sync.RWMutex`; concurrent reads during writes are validated with
-  `go test -race`.
-- **Incremental reindex** — `internal/store.AddDocument` must update
-  postings, facets, per-doc length, and `avgdl` correctly. Parity test:
-  build(N) + AddDocument(N+1) must produce the same state as build(N+1).
+- **Path containment** — extracted into `internal/safepath` so the security
+  boundary is reviewable in isolation. Used by the curator; nothing else
+  touches user-supplied paths without going through it.
+- **YAML round-trip** — `pkg/treenav/curator.go:SerializeMarkdown` must emit
+  bytes that `pkg/treenav/indexer.go:IndexFile` parses back losslessly.
+  Enforced by a property test in Phase B.
+- **Concurrency** — `internal/mcp`'s stdio handlers may run on separate
+  goroutines in Go (unlike Bun's single-threaded model). `pkg/treenav/store.go`
+  guards its index with `sync.RWMutex`; concurrent reads during writes are
+  validated under `go test -race`.
+- **Incremental reindex** — `pkg/treenav/store.AddDocument` must correctly
+  update postings, facets, `doc_lens`, and `avgdl`. Parity test:
+  `Build(N)` + `AddDocument(N+1)` must produce the same state as `Build(N+1)`.
 
-See `docs/spec/curator.md` and `docs/spec/safepath.md` for the full
-contract.
+See `docs/curator.md` and `docs/safepath.md` for the full contracts.
