@@ -387,7 +387,7 @@ const PATH_TYPE_PATTERNS: [RegExp, string][] = [
   [/\bpostmortem/i, "postmortem"],
 ];
 
-function inferTypeFromPath(relPath: string): string | null {
+export function inferTypeFromPath(relPath: string): string | null {
   // Check directory segments (not filename) for type patterns
   const dirPath = relPath.includes("/")
     ? relPath.substring(0, relPath.lastIndexOf("/"))

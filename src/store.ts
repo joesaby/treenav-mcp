@@ -898,6 +898,14 @@ export class DocumentStore {
   }
 
   /**
+   * Return the set of known glossary terms (abbreviations + expanded forms).
+   * Used by the curator to flag glossary hits in raw source content.
+   */
+  getGlossaryTerms(): string[] {
+    return [...this.glossary.keys()];
+  }
+
+  /**
    * Resolve a markdown cross-reference path to a doc_id and optional node_id.
    * Path may be a basename ("admin-guide.md"), relative ("../foo/admin-guide.md"),
    * or include a heading fragment ("admin-guide.md#user-provisioning").

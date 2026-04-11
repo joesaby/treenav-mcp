@@ -20,11 +20,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { DocumentStore } from "./store";
 import { indexAllCollections } from "./indexer";
 import { singleRootConfig } from "./types";
 import { registerTools } from "./tools";
+import type { WikiOptions } from "./curator";
 import type { IndexConfig } from "./types";
 
 // ── Configuration ────────────────────────────────────────────────────
@@ -58,8 +59,25 @@ const server = new McpServer({
   version: "1.0.0",
 });
 
+// Wiki curation toolset — opt-in via WIKI_WRITE=1. When unset, treenav
+// stays read-only and the curation tools are NOT registered.
+let wiki: WikiOptions | undefined;
+if (process.env.WIKI_WRITE === "1") {
+  const wikiRoot = resolve(process.env.WIKI_ROOT || docs_root);
+  wiki = {
+    root: wikiRoot,
+    collectionName: "docs",
+    duplicateThreshold: parseFloat(
+      process.env.WIKI_DUPLICATE_THRESHOLD || "0.35"
+    ),
+  };
+  console.error(
+    `[treenav-mcp] [wiki-write] write mode enabled; wiki root is ${wikiRoot}`
+  );
+}
+
 // Register all tools and resources from the shared module
-registerTools(server, store);
+registerTools(server, store, { wiki });
 
 // ── Startup ──────────────────────────────────────────────────────────
 
