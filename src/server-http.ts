@@ -8,13 +8,14 @@
  */
 
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { DocumentStore } from "./store";
 import { indexAllCollections } from "./indexer";
 import { singleRootConfig } from "./types";
 import { registerTools } from "./tools";
+import type { WikiOptions } from "./curator";
 import type { IndexConfig } from "./types";
 
 const docs_root = process.env.DOCS_ROOT || "./docs";
@@ -23,6 +24,20 @@ config.max_depth = parseInt(process.env.MAX_DEPTH || "6");
 config.summary_length = parseInt(process.env.SUMMARY_LENGTH || "200");
 
 const PORT = parseInt(process.env.PORT || "3100");
+
+// Wiki curation toolset — opt-in via WIKI_WRITE=1
+let wiki: WikiOptions | undefined;
+if (process.env.WIKI_WRITE === "1") {
+  const wikiRoot = resolve(process.env.WIKI_ROOT || docs_root);
+  wiki = {
+    root: wikiRoot,
+    collectionName: "docs",
+    duplicateThreshold: parseFloat(
+      process.env.WIKI_DUPLICATE_THRESHOLD || "0.35"
+    ),
+  };
+  console.log(`[wiki-write] write mode enabled; wiki root is ${wikiRoot}`);
+}
 
 const store = new DocumentStore();
 
@@ -73,7 +88,7 @@ async function main() {
           name: "treenav-mcp",
           version: "1.0.0",
         });
-        registerTools(server, store);
+        registerTools(server, store, { wiki });
 
         const transport = new WebStandardStreamableHTTPServerTransport({
           sessionIdGenerator: undefined, // stateless

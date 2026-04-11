@@ -15,8 +15,10 @@ src/
 │   ├── python.ts     # Python indentation-based symbol extraction
 │   └── generic.ts    # Fallback for Go, Rust, Java, C, Ruby, etc.
 ├── store.ts          # In-memory BM25 search engine + filter facets + glossary
+├── curator.ts        # Opt-in write-side curation (find_similar, draft, write)
 ├── types.ts          # All TypeScript interfaces and ranking defaults
-├── server.ts         # MCP stdio server (6 tools + 1 resource)
+├── tools.ts          # Shared MCP tool registration (read tools + optional curation)
+├── server.ts         # MCP stdio server (6 read tools + optional 3 curation tools)
 ├── server-http.ts    # MCP HTTP/Streamable HTTP server variant
 └── cli-index.ts      # CLI debugging tool for inspecting indexed output
 ```
@@ -74,6 +76,9 @@ A GitHub Release is created automatically with generated release notes. Docker H
 | `CODE_COLLECTION` | `code` | Name for the code collection |
 | `CODE_WEIGHT` | `1.0` | BM25 weight multiplier for code results |
 | `CODE_GLOB` | all supported extensions | Glob pattern for code files |
+| `WIKI_WRITE` | *(unset)* | Set to `1` to enable the write-side curation toolset (find_similar, draft_wiki_entry, write_wiki_entry). Off by default. |
+| `WIKI_ROOT` | `$DOCS_ROOT` | Filesystem root that curated entries must live under. Writes outside this path are rejected. |
+| `WIKI_DUPLICATE_THRESHOLD` | `0.35` | Overlap ratio above which writes warn and require `allow_duplicate=true`. |
 
 ### Glossary File Format
 
@@ -91,6 +96,8 @@ This enables bidirectional query expansion: searching "CLI" also matches "comman
 
 ## MCP Tools
 
+Read tools (always available):
+
 1. **`list_documents`** — Browse catalog with tag/keyword filtering, returns facet counts
 2. **`search_documents`** — BM25 keyword search with facet filters and glossary expansion
 3. **`get_tree`** — Hierarchical outline (no content) for agent reasoning
@@ -98,13 +105,21 @@ This enables bidirectional query expansion: searching "CLI" also matches "comman
 5. **`navigate_tree`** — Get a section and all descendants in one call
 6. **`find_symbol`** — Search code symbols by name, kind (`class`/`function`/`interface`/etc.), and language (requires `CODE_ROOT`)
 
+Curation tools (only when `WIKI_WRITE=1`):
+
+7. **`find_similar`** — BM25 dedupe check for prospective content
+8. **`draft_wiki_entry`** — Structural scaffold for a new entry (no write)
+9. **`write_wiki_entry`** — Validated write + incremental re-index
+
+The curation toolset lets a calling agent author new wiki entries while treenav enforces path containment, frontmatter schema, and duplicate thresholds. All LLM work stays in the calling agent — treenav itself performs zero LLM calls. See [docs/adr/0001-llm-curated-wiki.md](docs/adr/0001-llm-curated-wiki.md) and [docs/wiki-curation-spec.md](docs/wiki-curation-spec.md).
+
 ## Code Conventions
 
 - TypeScript with strict mode, ESNext target, bundler module resolution
 - No classes in indexer (functional), class-based store (`DocumentStore`)
 - Bun test runner (`bun test`) with `.test.ts` files in `tests/`
 - Comments reference design influences: PageIndex, Pagefind, Bun.markdown
-- Reserved frontmatter keys (not used as facets): title, description, layout, permalink, slug, draft, date
+- Reserved frontmatter keys (not used as facets): title, description, layout, permalink, slug, draft, date, source_url, source_title, captured_at, curator
 
 ## Frontmatter Best Practices for Indexed Docs
 
