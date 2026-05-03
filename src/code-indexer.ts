@@ -159,6 +159,8 @@ function symbolToTreeNode(symbol: CodeSymbol): TreeNode {
     word_count: wordCount,
     line_start: symbol.line_start,
     line_end: symbol.line_end,
+    symbol_kind: symbol.kind,
+    symbol_name: symbol.kind === "import" ? undefined : symbol.name,
   };
 }
 
