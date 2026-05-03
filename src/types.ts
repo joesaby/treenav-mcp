@@ -278,6 +278,20 @@ export interface RankingParams {
    *  identifier). Markdown nodes are never subtokenized. Default 0.5.
    *  Set to 0 to disable subtoken contributions. */
   subtoken_weight: number;
+
+  /** When the query looks identifier-shaped (camelCase, snake_case, or an
+   *  all-caps acronym ≥2 chars), `definition_boost` is multiplied by this
+   *  factor for that single query. The user typed a specific identifier —
+   *  surfacing the canonical definition matters even more. Default 1.5.
+   *  Set to 1.0 to disable. */
+  symbol_query_definition_boost_multiplier: number;
+
+  /** When the query looks identifier-shaped, `subtoken_weight` is multiplied
+   *  by this factor for that single query. The user typed a specific
+   *  identifier — they want exact matches, not loose subtoken matches that
+   *  often pull in unrelated code. Default 0.5. Set to 1.0 to disable
+   *  dampening. */
+  symbol_query_subtoken_dampener: number;
 }
 
 export const DEFAULT_RANKING: RankingParams = {
@@ -293,6 +307,8 @@ export const DEFAULT_RANKING: RankingParams = {
   file_coherence_bonus: 0.05,
   file_lead_bonus: 0.05,
   subtoken_weight: 0.5,
+  symbol_query_definition_boost_multiplier: 1.5,
+  symbol_query_subtoken_dampener: 0.5,
 };
 
 // ── Collection configuration (Pagefind multisite inspired) ──────────
