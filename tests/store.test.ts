@@ -1443,6 +1443,189 @@ describe("subtoken indexing", () => {
   });
 });
 
+// ── Query-shape-aware multipliers ───────────────────────────────────
+
+describe("query-shape-aware multipliers", () => {
+  let store: DocumentStore;
+
+  beforeEach(() => {
+    store = new DocumentStore();
+  });
+
+  function defNode(symbol_kind: string, symbol_name: string, content: string): TreeNode {
+    return makeNode({
+      node_id: `code:${symbol_name}:n1`,
+      title: `${symbol_kind} ${symbol_name}`,
+      content,
+      symbol_kind,
+      symbol_name,
+    });
+  }
+
+  test("camelCase query bumps definition_boost via multiplier", () => {
+    store.load([
+      makeDoc({
+        meta: { doc_id: "code:def", file_path: "p.ts", collection: "code" },
+        tree: [defNode("function", "parseConfig", "function parseConfig() { return {}; }")],
+        root_nodes: ["code:parseConfig:n1"],
+      }),
+    ]);
+
+    store.setRanking({
+      definition_boost: 2.0,
+      symbol_query_definition_boost_multiplier: 1.0, // shape detection effectively off
+    });
+    const baseline = store.searchDocuments("parseConfig")[0].score;
+
+    store.setRanking({
+      definition_boost: 2.0,
+      symbol_query_definition_boost_multiplier: 1.5,
+    });
+    const bumped = store.searchDocuments("parseConfig")[0].score;
+
+    // The boost is applied multiplicatively. Effective boost goes from 2.0 to 3.0,
+    // so the bumped score = baseline * (3.0 / 2.0) = baseline * 1.5.
+    expect(bumped / baseline).toBeCloseTo(1.5, 2);
+  });
+
+  test("snake_case query is detected as symbol-shaped", () => {
+    store.load([
+      makeDoc({
+        meta: { doc_id: "code:py", file_path: "config.py", collection: "code" },
+        tree: [defNode("function", "parse_log_level", "def parse_log_level(s): return MAPPING[s]")],
+        root_nodes: ["code:parse_log_level:n1"],
+      }),
+    ]);
+
+    store.setRanking({
+      definition_boost: 2.0,
+      symbol_query_definition_boost_multiplier: 1.0,
+    });
+    const baseline = store.searchDocuments("parse_log_level")[0].score;
+
+    store.setRanking({
+      definition_boost: 2.0,
+      symbol_query_definition_boost_multiplier: 2.0,
+    });
+    const bumped = store.searchDocuments("parse_log_level")[0].score;
+
+    expect(bumped).toBeGreaterThan(baseline);
+  });
+
+  test("all-caps acronym (≥2 chars) is detected as symbol-shaped", () => {
+    store.load([
+      makeDoc({
+        meta: { doc_id: "code:url", file_path: "url.ts", collection: "code" },
+        tree: [defNode("class", "URL", "class URL { static parse(s: string) {} }")],
+        root_nodes: ["code:URL:n1"],
+      }),
+    ]);
+
+    store.setRanking({
+      definition_boost: 2.0,
+      symbol_query_definition_boost_multiplier: 1.0,
+    });
+    const baseline = store.searchDocuments("URL")[0].score;
+
+    store.setRanking({
+      definition_boost: 2.0,
+      symbol_query_definition_boost_multiplier: 2.0,
+    });
+    const bumped = store.searchDocuments("URL")[0].score;
+
+    expect(bumped).toBeGreaterThan(baseline);
+  });
+
+  test("symbol-shaped query dampens subtoken_weight", () => {
+    // Doc with a SUBTOKEN match for the query. Symbol-shaped detection
+    // should dampen the subtoken contribution.
+    store.load([
+      makeDoc({
+        meta: { doc_id: "code:sub", file_path: "sub.ts", collection: "code" },
+        tree: [makeNode({
+          node_id: "code:sub:n1",
+          title: "function parseFrontmatter",
+          content: "function parseFrontmatter() { return {}; }",
+          symbol_kind: "function",
+          symbol_name: "parseFrontmatter",
+        })],
+        root_nodes: ["code:sub:n1"],
+      }),
+    ]);
+
+    // Multi-token query: "BM25" triggers shape detection (all-caps ≥2 chars);
+    // "frontmatter" hits the subtoken posting from parseFrontmatter.
+    store.setRanking({
+      subtoken_weight: 1.0,
+      symbol_query_subtoken_dampener: 1.0, // off
+    });
+    const baseline = store.searchDocuments("BM25 frontmatter");
+
+    store.setRanking({
+      subtoken_weight: 1.0,
+      symbol_query_subtoken_dampener: 0.1,
+    });
+    const dampened = store.searchDocuments("BM25 frontmatter");
+
+    expect(baseline.length).toBeGreaterThan(0);
+    expect(dampened.length).toBeGreaterThan(0);
+    expect(dampened[0].score).toBeLessThan(baseline[0].score);
+  });
+
+  test("natural-language query is NOT treated as symbol-shaped", () => {
+    store.load([
+      makeDoc({
+        meta: { doc_id: "code:def", file_path: "p.ts", collection: "code" },
+        tree: [defNode("function", "authenticate", "function authenticate() {}")],
+        root_nodes: ["code:authenticate:n1"],
+      }),
+    ]);
+
+    // Plain lowercase, no underscores, no caps-runs → natural language.
+    store.setRanking({
+      definition_boost: 2.0,
+      symbol_query_definition_boost_multiplier: 5.0, // big multiplier, but should NOT apply
+    });
+    const result = store.searchDocuments("authenticate")[0].score;
+
+    store.setRanking({
+      definition_boost: 2.0,
+      symbol_query_definition_boost_multiplier: 1.0,
+    });
+    const baseline = store.searchDocuments("authenticate")[0].score;
+
+    // Natural-language query → multiplier ignored → identical scores
+    expect(result).toBeCloseTo(baseline, 3);
+  });
+
+  test("PascalCase single word ('Hello') is NOT shape-detected", () => {
+    // 'Hello' is PascalCase but it's just a regular word; we don't want
+    // a single capital letter (or single-word capitalized text) to flip
+    // the symbol-shaped flag.
+    store.load([
+      makeDoc({
+        meta: { doc_id: "code:def", file_path: "p.ts", collection: "code" },
+        tree: [defNode("function", "Hello", "function Hello() {}")],
+        root_nodes: ["code:Hello:n1"],
+      }),
+    ]);
+
+    store.setRanking({
+      definition_boost: 2.0,
+      symbol_query_definition_boost_multiplier: 5.0,
+    });
+    const big = store.searchDocuments("Hello")[0].score;
+
+    store.setRanking({
+      definition_boost: 2.0,
+      symbol_query_definition_boost_multiplier: 1.0,
+    });
+    const baseline = store.searchDocuments("Hello")[0].score;
+
+    expect(big).toBeCloseTo(baseline, 3);
+  });
+});
+
 // ── resolveRef ──────────────────────────────────────────────────────
 
 describe("resolveRef", () => {

@@ -588,6 +588,22 @@ export class DocumentStore {
     const queryTerms = tokenize(query).map(stem).filter((t) => t.length >= 2);
     if (queryTerms.length === 0) return [];
 
+    // Detect shape on the RAW query (preserves casing) so camelCase /
+    // snake_case / acronym signals survive the lowercasing in tokenize().
+    // Used to bump definition_boost and dampen subtoken_weight for this
+    // single search call — Semble-style adaptive lexical weighting,
+    // adapted for treenav's single-signal pipeline (will become a per-
+    // retriever weighting once Tier 3 RRF lands).
+    const symbolShaped = isSymbolShapedQuery(query);
+    const effectiveDefinitionBoost = symbolShaped
+      ? this.ranking.definition_boost *
+        this.ranking.symbol_query_definition_boost_multiplier
+      : this.ranking.definition_boost;
+    const effectiveSubtokenWeight = symbolShaped
+      ? this.ranking.subtoken_weight *
+        this.ranking.symbol_query_subtoken_dampener
+      : this.ranking.subtoken_weight;
+
     // Expand query using glossary (abbreviation ↔ expanded forms)
     const expandedTerms = this.expandQueryTerms(queryTerms);
     const uniqueTerms = [...new Set(expandedTerms)];
@@ -730,7 +746,7 @@ export class DocumentStore {
       // Subtoken contributions are weighted by subtoken_weight and DO NOT
       // count toward exactTerms (so full_coverage_bonus can't be spoofed
       // by a single multi-part identifier).
-      if (this.ranking.subtoken_weight > 0) {
+      if (effectiveSubtokenWeight > 0) {
         const subPostings = this.subtokenIndex.get(term);
         if (subPostings) {
           for (const posting of subPostings) {
@@ -743,7 +759,7 @@ export class DocumentStore {
 
             const bm25Score =
               this.computeBM25Subtoken(term, posting, stats.total_tokens) *
-              this.ranking.subtoken_weight;
+              effectiveSubtokenWeight;
 
             if (!nodeScores.has(nodeKey)) {
               nodeScores.set(nodeKey, {
@@ -790,7 +806,7 @@ export class DocumentStore {
       if (doc) {
         const node = doc.tree.find((n) => n.node_id === entry.node_id);
         if (node && isDefinitionMatch(node, queryTerms, this.glossary)) {
-          entry.score *= this.ranking.definition_boost;
+          entry.score *= effectiveDefinitionBoost;
         }
 
         // Apply noise penalty: down-rank tests / .d.ts / legacy paths in code
@@ -1352,6 +1368,19 @@ function compileGrepRegex(opts: GrepOptions): RegExp {
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// ── Query-shape detection (Semble-inspired adaptive weighting) ──────
+//
+// Returns true if the raw query string looks like an identifier rather
+// than natural-language prose. Triggered by:
+//   - camelCase transition: a lowercase-then-uppercase sequence
+//     (`parseConfig`, `getUserById`)
+//   - snake_case / kebab-case: contains `_` or `-`
+//   - all-caps run ≥2 chars (`URL`, `BM25`, `URLParser`)
+// Plain words and PascalCase single words ("Hello") are NOT shape-detected.
+function isSymbolShapedQuery(query: string): boolean {
+  return /[a-z][A-Z]/.test(query) || /_/.test(query) || /[A-Z]{2,}/.test(query);
 }
 
 // ── Subtoken extraction (Semble-inspired identifier-stem matching) ──
