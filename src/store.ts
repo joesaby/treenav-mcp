@@ -633,9 +633,17 @@ export class DocumentStore {
         entry.score += this.ranking.full_coverage_bonus;
       }
 
-      // Apply collection weight (Pagefind indexWeight equivalent)
+      // Apply definition boost: when a query term exactly matches a code
+      // node's symbol_name AND symbol_kind is a definition-kind, multiply
+      // once. Lifts canonical definitions above call-sites and references.
       const doc = this.docs.get(entry.doc_id);
       if (doc) {
+        const node = doc.tree.find((n) => n.node_id === entry.node_id);
+        if (node && isDefinitionMatch(node, queryTerms, this.glossary)) {
+          entry.score *= this.ranking.definition_boost;
+        }
+
+        // Apply collection weight (Pagefind indexWeight equivalent)
         const colWeight =
           this.collectionWeights.get(doc.meta.collection) ?? 1.0;
         entry.score *= colWeight;
@@ -1118,6 +1126,57 @@ function compileGrepRegex(opts: GrepOptions): RegExp {
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// ── Definition-kind check for definition_boost ──────────────────────
+//
+// A node qualifies for definition_boost when:
+//   1. its symbol_kind is one of the definition-kinds (excludes "import")
+//   2. its symbol_name (after lowercasing) matches one of the raw query terms
+//      OR one of the stemmed query terms OR one of the tokenized expansions
+//      from the glossary.
+//
+// We deliberately compare against the *raw* query terms (pre-stem), the
+// stemmed terms, and the lowercased symbol_name pre-stem. This covers
+// camelCase symbol names that don't survive stemming intact.
+
+const DEFINITION_KINDS = new Set([
+  "class",
+  "function",
+  "interface",
+  "method",
+  "type",
+  "enum",
+  "struct",
+  "trait",
+  "enum_variant",
+]);
+
+function isDefinitionMatch(
+  node: TreeNode,
+  rawQueryTerms: string[],
+  glossary: Map<string, string[]>,
+): boolean {
+  if (!node.symbol_kind || !node.symbol_name) return false;
+  if (!DEFINITION_KINDS.has(node.symbol_kind)) return false;
+
+  const name = node.symbol_name.toLowerCase();
+  const stemmedName = stem(name);
+
+  for (const term of rawQueryTerms) {
+    const lc = term.toLowerCase();
+    if (lc === name || stem(lc) === stemmedName) return true;
+
+    // Check glossary expansions for this term too — if the user typed an
+    // abbreviation that expands to the symbol name, treat it as a match.
+    const expansions = glossary.get(lc);
+    if (expansions) {
+      for (const exp of expansions) {
+        if (exp === name || stem(exp) === stemmedName) return true;
+      }
+    }
+  }
+  return false;
 }
 
 // ── Tokenization ─────────────────────────────────────────────────────

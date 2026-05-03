@@ -795,6 +795,139 @@ describe("ranking parameters", () => {
   });
 });
 
+// ── Definition boost ────────────────────────────────────────────────
+
+describe("definition boost", () => {
+  let store: DocumentStore;
+
+  beforeEach(() => {
+    store = new DocumentStore();
+  });
+
+  function defNode(symbol_kind: string, symbol_name: string, content: string): TreeNode {
+    return makeNode({
+      node_id: `code:${symbol_name}:n1`,
+      title: `${symbol_kind} ${symbol_name}`,
+      content,
+      symbol_kind,
+      symbol_name,
+    });
+  }
+
+  function callsiteNode(node_id: string, content: string): TreeNode {
+    return makeNode({ node_id, title: "function callerOfThings", content });
+  }
+
+  test("definition node ranks above call-site for exact symbol-name query", () => {
+    store.load([
+      makeDoc({
+        meta: { doc_id: "code:def", file_path: "parser.ts", collection: "code" },
+        tree: [defNode("function", "parseConfig", "function parseConfig(input: string) { return JSON.parse(input); }")],
+        root_nodes: ["code:parseConfig:n1"],
+      }),
+      makeDoc({
+        meta: { doc_id: "code:call", file_path: "main.ts", collection: "code" },
+        tree: [callsiteNode("code:call:n1", "function callerOfThings() { const cfg = parseConfig(raw); return cfg; }")],
+        root_nodes: ["code:call:n1"],
+      }),
+    ]);
+
+    const results = store.searchDocuments("parseConfig");
+
+    expect(results.length).toBeGreaterThanOrEqual(2);
+    expect(results[0].node_id).toBe("code:parseConfig:n1");
+    expect(results[0].score).toBeGreaterThan(results[1].score);
+  });
+
+  test("only fires for definition-kind nodes (class/function/interface/method/type/enum/struct/trait/enum_variant)", () => {
+    // A node with symbol_kind="import" should NOT receive the boost
+    store.load([
+      makeDoc({
+        meta: { doc_id: "code:import", file_path: "imports.ts", collection: "code" },
+        tree: [defNode("import", "parseConfig", "import { parseConfig } from './parser';")],
+        root_nodes: ["code:parseConfig:n1"],
+      }),
+      makeDoc({
+        meta: { doc_id: "code:def", file_path: "parser.ts", collection: "code" },
+        tree: [defNode("function", "parseConfig", "function parseConfig(input: string) { return JSON.parse(input); }")],
+        root_nodes: ["code:parseConfig:n1"],
+      }),
+    ]);
+
+    const results = store.searchDocuments("parseConfig");
+    expect(results[0].doc_id).toBe("code:def");
+  });
+
+  test("does not fire when symbol_name is missing (markdown nodes)", () => {
+    // Markdown node with title containing "parseConfig" — must not be boosted
+    store.load([
+      makeDoc({
+        meta: { doc_id: "docs:guide", file_path: "guide.md", collection: "docs" },
+        tree: [makeNode({
+          node_id: "docs:guide:n1",
+          title: "parseConfig usage notes",
+          content: "How to call parseConfig correctly.",
+          // no symbol_kind / symbol_name — markdown node
+        })],
+        root_nodes: ["docs:guide:n1"],
+      }),
+      makeDoc({
+        meta: { doc_id: "code:def", file_path: "parser.ts", collection: "code" },
+        tree: [defNode("function", "parseConfig", "function parseConfig(input: string) { return JSON.parse(input); }")],
+        root_nodes: ["code:parseConfig:n1"],
+      }),
+    ]);
+
+    const results = store.searchDocuments("parseConfig");
+    expect(results[0].doc_id).toBe("code:def");
+  });
+
+  test("boost applies once per node regardless of how many query terms match the symbol", () => {
+    // Query with multiple terms, only one matches the symbol — node still gets one boost
+    // (we test this by comparing against a query with the term repeated)
+    store.load([
+      makeDoc({
+        meta: { doc_id: "code:def", file_path: "parser.ts", collection: "code" },
+        tree: [defNode("function", "parseConfig", "function parseConfig(input: string) { return JSON.parse(input); }")],
+        root_nodes: ["code:parseConfig:n1"],
+      }),
+    ]);
+
+    const single = store.searchDocuments("parseConfig");
+    const repeated = store.searchDocuments("parseConfig parseConfig parseConfig");
+
+    // Repeated query is deduplicated to a single unique stem, so scores should match.
+    // The boost is applied once, not three times.
+    expect(single[0].score).toBeCloseTo(repeated[0].score, 3);
+  });
+
+  test("setRanking({ definition_boost }) is configurable", () => {
+    store.load([
+      makeDoc({
+        meta: { doc_id: "code:def", file_path: "parser.ts", collection: "code" },
+        tree: [defNode("function", "parseConfig", "function parseConfig(input: string) { return JSON.parse(input); }")],
+        root_nodes: ["code:parseConfig:n1"],
+      }),
+      makeDoc({
+        meta: { doc_id: "code:call", file_path: "main.ts", collection: "code" },
+        tree: [callsiteNode("code:call:n1", "function callerOfThings() { const cfg = parseConfig(raw); return cfg; }")],
+        root_nodes: ["code:call:n1"],
+      }),
+    ]);
+
+    store.setRanking({ definition_boost: 1.0 });
+    const noBoost = store.searchDocuments("parseConfig");
+    const noBoostDefScore = noBoost.find((r) => r.doc_id === "code:def")!.score;
+
+    store.setRanking({ definition_boost: 5.0 });
+    const withBoost = store.searchDocuments("parseConfig");
+    const withBoostDefScore = withBoost.find((r) => r.doc_id === "code:def")!.score;
+
+    expect(withBoostDefScore).toBeGreaterThan(noBoostDefScore);
+    expect(withBoostDefScore / noBoostDefScore).toBeCloseTo(5.0, 1);
+  });
+});
+
 // ── resolveRef ──────────────────────────────────────────────────────
 
 describe("resolveRef", () => {
