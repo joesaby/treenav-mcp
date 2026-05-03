@@ -729,4 +729,27 @@ export const QRELS: RawQRel[] = [
     ],
     mustBeInTop: { docTitle: "config", nodeTitle: "parse_log_level", k: 5 },
   },
+
+  // ── Definition boost (Tier 1, Task 1.1) ────────────────────────────────────
+  // These assert k=1 — only the definition_boost can lift definitions ahead of
+  // unrelated docs that share vocabulary.
+
+  {
+    id: "DEF1",
+    query: "validateToken",
+    category: "code-symbol",
+    relevant: [
+      { docTitle: "AuthService", nodeTitle: "validateToken", relevance: 3 },
+    ],
+    mustBeInTop: { docTitle: "AuthService", nodeTitle: "validateToken", k: 1 },
+  },
+  {
+    id: "DEF2",
+    query: "addRoute",
+    category: "code-symbol",
+    relevant: [
+      { docTitle: "router", nodeTitle: "addRoute", relevance: 3 },
+    ],
+    mustBeInTop: { docTitle: "router", nodeTitle: "addRoute", k: 1 },
+  },
 ];

@@ -244,6 +244,13 @@ export interface RankingParams {
   /** Discount factor for prefix matches (0-1). Default 0.5.
    *  Pagefind handles this at the chunk-loading level; we apply as a score multiplier. */
   prefix_penalty: number;
+
+  /** Multiplier applied to a code node's score when a query term exactly matches
+   *  its `symbol_name` AND its `symbol_kind` is a definition-kind (class, function,
+   *  interface, method, type, enum, struct, trait, enum_variant). Lifts the
+   *  definition above call-sites and references. Default 2.0. Set to 1.0 to disable.
+   *  Applies once per node regardless of how many terms match. */
+  definition_boost: number;
 }
 
 export const DEFAULT_RANKING: RankingParams = {
@@ -255,6 +262,7 @@ export const DEFAULT_RANKING: RankingParams = {
   term_proximity_bonus: 2.0,
   full_coverage_bonus: 5.0,
   prefix_penalty: 0.5,
+  definition_boost: 2.0,
 };
 
 // ── Collection configuration (Pagefind multisite inspired) ──────────
