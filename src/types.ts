@@ -280,7 +280,34 @@ export interface CollectionConfig {
   weight: number; // multiplied into BM25 scores. Pagefind's indexWeight equivalent.
   glob_pattern?: string;
   glob_patterns?: string[];
+  /** Score-time penalty patterns applied to docs in this collection.
+   *  Each pattern is a regex string matched against `meta.file_path`; when
+   *  multiple patterns match a doc, the lowest penalty wins (penalties do
+   *  not compound). Penalty is a multiplier in (0, 1]; default behavior
+   *  (no field set) is no penalty. Used to down-rank tests, .d.ts stubs,
+   *  legacy/compat shims while keeping them in the index. */
+  noise_patterns?: NoisePattern[];
 }
+
+export interface NoisePattern {
+  /** Regex string matched against `DocumentMeta.file_path` */
+  pattern: string;
+  /** Score multiplier in (0, 1]. Lower = stronger demotion. */
+  penalty: number;
+}
+
+/** Default score-time noise patterns for code collections.
+ *  Markdown collections get NO defaults — wikis often have legitimate
+ *  `legacy/` content that should not be auto-penalized. */
+export const DEFAULT_CODE_NOISE_PATTERNS: NoisePattern[] = [
+  { pattern: "(^|/)__tests__/", penalty: 0.5 },
+  { pattern: "\\.test\\.[a-z]+$", penalty: 0.5 },
+  { pattern: "\\.spec\\.[a-z]+$", penalty: 0.5 },
+  { pattern: "\\.d\\.ts$", penalty: 0.3 },
+  { pattern: "(^|/)compat/", penalty: 0.6 },
+  { pattern: "(^|/)legacy/", penalty: 0.6 },
+  { pattern: "(^|/)examples?/", penalty: 0.7 },
+];
 
 /** Main configuration */
 export interface IndexConfig {
