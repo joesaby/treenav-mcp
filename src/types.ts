@@ -251,6 +251,22 @@ export interface RankingParams {
    *  definition above call-sites and references. Default 2.0. Set to 1.0 to disable.
    *  Applies once per node regardless of how many terms match. */
   definition_boost: number;
+
+  /** Multiplicative lift applied to every matching node within a doc when the doc
+   *  has ≥2 matching nodes. Each node's score is multiplied by
+   *  `1 + file_coherence_bonus * min(matchCount - 1, 5)`. Bounded so a doc with
+   *  many incidental matches doesn't dominate a doc with a single strong hit.
+   *  Models the Semble insight that a file with multiple distinct matches is
+   *  more relevant than a file with one incidental match. Default 0.05.
+   *  Set to 0 to disable. */
+  file_coherence_bonus: number;
+
+  /** Extra additive lift for the leading node in a multi-hit doc. Pushes the
+   *  file's natural entry point (top-of-file, exported class) ahead of internal
+   *  methods. Adds `file_lead_bonus * max(group scores)` to the node with the
+   *  smallest `line_start` (tie-broken by shallowest `level`). Default 0.05.
+   *  Set to 0 to disable. */
+  file_lead_bonus: number;
 }
 
 export const DEFAULT_RANKING: RankingParams = {
@@ -263,6 +279,8 @@ export const DEFAULT_RANKING: RankingParams = {
   full_coverage_bonus: 5.0,
   prefix_penalty: 0.5,
   definition_boost: 2.0,
+  file_coherence_bonus: 0.05,
+  file_lead_bonus: 0.05,
 };
 
 // ── Collection configuration (Pagefind multisite inspired) ──────────
