@@ -1,15 +1,22 @@
 /**
- * MCP Server for Markdown Tree Navigation
+ * MCP Server for Markdown + Code Tree Navigation
  *
- * Exposes 6 tools that let an agent perform PageIndex-style reasoning
- * over your markdown repository:
+ * Exposes tools that let an agent perform PageIndex-style reasoning
+ * over your markdown repository and source code:
  *
  *   1. list_documents   - Browse the document catalog
- *   2. search_documents - Keyword search across all docs
- *   3. get_tree         - Get hierarchical outline of a document
- *   4. get_node_content - Retrieve text from specific tree nodes
- *   5. navigate_tree    - Get a subtree (node + all descendants)
- *   6. find_symbol      - Search code symbols by name/kind/language
+ *   2. search_documents - BM25 keyword search across all docs
+ *   3. grep_documents   - Literal/regex match across indexed content
+ *   4. get_tree         - Hierarchical outline of a document
+ *   5. get_node_content - Retrieve text from specific tree nodes
+ *   6. navigate_tree    - Get a subtree (node + all descendants)
+ *   7. lookup_row       - O(1) key→row lookup (CSV/JSONL data)
+ *   8. find_symbol      - Search code symbols by name/kind/language
+ *
+ * Optional wiki curation tools (WIKI_WRITE=1):
+ *   9.  find_similar     - Duplicate detection before writing
+ *   10. draft_wiki_entry - Structural scaffold for new entries
+ *   11. write_wiki_entry - Validated write with safety checks
  *
  * The agent workflow:
  *   search/list → pick doc → get_tree → reason about structure →
@@ -24,9 +31,10 @@ import { join, resolve } from "node:path";
 import { DocumentStore } from "./store";
 import { indexAllCollections } from "./indexer";
 import { singleRootConfig } from "./types";
-import { registerTools } from "./tools";
-import type { WikiOptions } from "./curator";
 import type { IndexConfig } from "./types";
+import type { WikiOptions } from "./curator";
+import { registerTools } from "./tools";
+import { registerPrompts } from "./prompts";
 
 // ── Configuration ────────────────────────────────────────────────────
 
@@ -34,6 +42,16 @@ const docs_root = process.env.DOCS_ROOT || "./docs";
 const config: IndexConfig = singleRootConfig(docs_root);
 config.max_depth = parseInt(process.env.MAX_DEPTH || "6");
 config.summary_length = parseInt(process.env.SUMMARY_LENGTH || "200");
+
+// Multi-glob support: DOCS_GLOB=**/*.md,**/*.csv,**/*.jsonl
+const docsGlob = process.env.DOCS_GLOB;
+if (docsGlob) {
+  const patterns = docsGlob.split(",").map((p) => p.trim()).filter(Boolean);
+  if (patterns.length > 0) {
+    config.collections[0].glob_patterns = patterns;
+    config.collections[0].glob_pattern = undefined;
+  }
+}
 
 // Code collection: set CODE_ROOT to enable AST-based code indexing
 const code_root = process.env.CODE_ROOT;
@@ -59,8 +77,8 @@ const server = new McpServer({
   version: "1.0.0",
 });
 
-// Wiki curation toolset — opt-in via WIKI_WRITE=1. When unset, treenav
-// stays read-only and the curation tools are NOT registered.
+// ── Wiki configuration (opt-in via WIKI_WRITE=1) ────────────────────
+
 let wiki: WikiOptions | undefined;
 if (process.env.WIKI_WRITE === "1") {
   const wikiRoot = resolve(process.env.WIKI_ROOT || docs_root);
@@ -71,46 +89,65 @@ if (process.env.WIKI_WRITE === "1") {
       process.env.WIKI_DUPLICATE_THRESHOLD || "0.35"
     ),
   };
-  console.error(
-    `[treenav-mcp] [wiki-write] write mode enabled; wiki root is ${wikiRoot}`
-  );
 }
 
-// Register all tools and resources from the shared module
+// ── Register tools, prompts, resources ──────────────────────────────
+
 registerTools(server, store, { wiki });
+registerPrompts(server, { wikiEnabled: !!wiki });
+
+server.resource("index-stats", "md-tree://stats", async (uri) => {
+  const stats = store.getStats();
+  return {
+    contents: [
+      {
+        uri: uri.href,
+        mimeType: "application/json",
+        text: JSON.stringify(stats, null, 2),
+      },
+    ],
+  };
+});
 
 // ── Startup ──────────────────────────────────────────────────────────
 
 async function main() {
-  console.error(`[treenav-mcp] Indexing documents from: ${docs_root}`);
-
-  // Index all documents at startup
-  const startTime = Date.now();
-  const documents = await indexAllCollections(config);
-  store.load(documents);
-
-  // Load glossary if present (glossary.json in docs root)
-  const glossaryPath = process.env.GLOSSARY_PATH || join(docs_root, "glossary.json");
-  if (existsSync(glossaryPath)) {
-    try {
-      const glossaryData = await Bun.file(glossaryPath).json();
-      store.loadGlossary(glossaryData);
-      console.error(`[treenav-mcp] Glossary loaded from ${glossaryPath}`);
-    } catch (err: any) {
-      console.error(`[treenav-mcp] Warning: Failed to load glossary from ${glossaryPath}: ${err.message}`);
-    }
-  }
-
-  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-  const stats = store.getStats();
-  console.error(
-    `[treenav-mcp] Ready in ${elapsed}s — ${stats.document_count} docs, ${stats.total_nodes} sections, ${stats.indexed_terms} terms`
-  );
-
-  // Connect via stdio transport
+  // Connect via stdio transport first so the MCP handshake succeeds
+  // before the (potentially slow) indexing phase begins.
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("[treenav-mcp] MCP server running on stdio");
+
+  // Defer indexing to the next tick so the transport can process
+  // the MCP handshake while indexing runs.
+  setTimeout(async () => {
+    console.error(`[treenav-mcp] Indexing documents from: ${docs_root}`);
+
+    const startTime = Date.now();
+    const documents = await indexAllCollections(config);
+    store.load(documents);
+
+    const glossaryPath = process.env.GLOSSARY_PATH || join(docs_root, "glossary.json");
+    if (existsSync(glossaryPath)) {
+      try {
+        const glossaryData = await Bun.file(glossaryPath).json();
+        store.loadGlossary(glossaryData);
+        console.error(`[treenav-mcp] Glossary loaded from ${glossaryPath}`);
+      } catch (err: any) {
+        console.error(`[treenav-mcp] Warning: Failed to load glossary from ${glossaryPath}: ${err.message}`);
+      }
+    }
+
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    const stats = store.getStats();
+    console.error(
+      `[treenav-mcp] Ready in ${elapsed}s — ${stats.document_count} docs, ${stats.total_nodes} sections, ${stats.indexed_terms} terms`
+    );
+
+    if (wiki) {
+      console.error(`[treenav-mcp] Wiki write enabled — root: ${wiki.root}`);
+    }
+  }, 0);
 }
 
 main().catch((err) => {

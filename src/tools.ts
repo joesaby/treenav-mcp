@@ -9,6 +9,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { DocumentStore } from "./store";
+import type { GrepOutcome } from "./types";
 import { formatSearchResults } from "./search-formatter.js";
 import {
   CuratorError,
@@ -19,20 +20,58 @@ import {
 } from "./curator.js";
 
 /**
+ * Render a grep_documents outcome as agent-friendly text:
+ *   path:line  [doc_id → node_id]  node title
+ *     <context_before>
+ *   > <line>
+ *     <context_after>
+ */
+export function formatGrepResult(outcome: GrepOutcome, pattern: string): string {
+  if (outcome.hits.length === 0) {
+    const suffix = outcome.aborted
+      ? " (scan aborted by time budget — narrow the pattern or use filters)"
+      : "";
+    return `No matches for "${pattern}" across ${outcome.docs_scanned} document(s)${suffix}.\n\nIf this was a literal search, try search_documents("${pattern}") — stemming or glossary expansion may rescue terms that don't match literally.`;
+  }
+
+  const blocks = outcome.hits.map((h) => {
+    const header = `${h.file_path}:${h.line_no}  [${h.doc_id} → ${h.node_id}]  ${h.node_title}`;
+    const before = h.context_before
+      .map((l, i) => `  ${h.line_no - h.context_before.length + i} | ${l}`)
+      .join("\n");
+    const match = `> ${h.line_no} | ${h.line}`;
+    const after = h.context_after
+      .map((l, i) => `  ${h.line_no + 1 + i} | ${l}`)
+      .join("\n");
+    return [header, before, match, after].filter(Boolean).join("\n");
+  });
+
+  const notes: string[] = [];
+  if (outcome.truncated) notes.push("result limit hit — raise `limit` or narrow `path_glob`/`filters`");
+  if (outcome.aborted) notes.push("scan aborted by time budget — simplify the pattern");
+
+  const summary = `Found ${outcome.hits.length} match(es) for "${pattern}" across ${outcome.docs_scanned} doc(s) / ${outcome.nodes_scanned} section(s)${notes.length ? ` — ${notes.join("; ")}` : ""}.`;
+
+  return `${summary}\n\n${blocks.join("\n\n")}\n\nEach hit carries a node_id — call get_node_content(doc_id, [node_id]) or navigate_tree(doc_id, node_id) to read the full section.`;
+}
+
+/**
  * Register all treenav-mcp tools and resources on the given MCP server.
  *
  * Read tools (always registered):
  *   1. list_documents   — Browse the document catalog
  *   2. search_documents — Keyword search across all docs
- *   3. get_tree         — Hierarchical outline of a document
- *   4. get_node_content — Retrieve text from specific tree nodes
- *   5. navigate_tree    — Get a subtree (node + all descendants)
- *   6. find_symbol      — Code-aware symbol search
+ *   3. grep_documents   — Literal/regex match (the `grep -n` of the index)
+ *   4. get_tree         — Hierarchical outline of a document
+ *   5. get_node_content — Retrieve text from specific tree nodes
+ *   6. navigate_tree    — Get a subtree (node + all descendants)
+ *   7. lookup_row       — O(1) key→row lookup for structured (CSV/JSONL) data
+ *   8. find_symbol      — Code-aware symbol search
  *
  * Curation tools (only when options.wiki is provided, i.e. WIKI_WRITE=1):
- *   7. find_similar     — BM25 dedupe check for prospective content
- *   8. draft_wiki_entry — Structural scaffold for a new entry (no write)
- *   9. write_wiki_entry — Validated write + incremental re-index
+ *   9.  find_similar     — BM25 dedupe check for prospective content
+ *   10. draft_wiki_entry — Structural scaffold for a new entry (no write)
+ *   11. write_wiki_entry — Validated write + incremental re-index
  *
  * Resources:
  *   - index-stats (md-tree://stats) — JSON index statistics
@@ -119,6 +158,61 @@ export function registerTools(
       const results = store.searchDocuments(query, { limit, doc_id, filters });
       const text = formatSearchResults(results, store, query);
       return { content: [{ type: "text" as const, text }] };
+    }
+  );
+
+  // ── Tool 2b: grep_documents ────────────────────────────────────────
+
+  server.tool(
+    "grep_documents",
+    "Literal or regex match across indexed document content — the grep-style counterpart to search_documents. Use this when you already know the EXACT string, symbol, error code, CLI flag, or config key you are looking for and don't want BM25 ranking, stemming, or glossary expansion in the way. Returns file path, line number, node_id, and matching lines with context. Fall back to search_documents for conceptual queries (e.g. 'how do we rotate tokens') where wording varies.",
+    {
+      pattern: z
+        .string()
+        .min(1)
+        .describe("Literal string by default; set regex=true to treat as a RegExp source"),
+      regex: z
+        .boolean()
+        .default(false)
+        .describe("If true, treat pattern as a regex. Nested quantifiers and lookarounds are rejected to prevent ReDoS."),
+      case_insensitive: z.boolean().default(false),
+      doc_id: z.string().optional().describe("Limit scan to one document"),
+      path_glob: z
+        .string()
+        .optional()
+        .describe("Glob over the file_path, e.g. '**/runbooks/**' or 'auth/*.md'"),
+      filters: z
+        .record(z.union([z.string(), z.array(z.string())]))
+        .optional()
+        .describe('Same facet filters as search_documents, e.g. { "type": "runbook" }'),
+      context: z
+        .number()
+        .min(0)
+        .max(5)
+        .default(1)
+        .describe("Lines of context on each side of a match"),
+      limit: z.number().min(1).max(200).default(50),
+    },
+    async ({ pattern, regex, case_insensitive, doc_id, path_glob, filters, context, limit }) => {
+      try {
+        const outcome = store.grepDocuments({
+          pattern,
+          regex,
+          case_insensitive,
+          doc_id,
+          path_glob,
+          filters,
+          context,
+          limit,
+        });
+        return {
+          content: [{ type: "text" as const, text: formatGrepResult(outcome, pattern) }],
+        };
+      } catch (err: any) {
+        return {
+          content: [{ type: "text" as const, text: `grep_documents error: ${err.message}` }],
+        };
+      }
     }
   );
 
@@ -268,7 +362,44 @@ export function registerTools(
     }
   );
 
-  // ── Tool 6: find_symbol ────────────────────────────────────────────
+  // ── Tool 7: lookup_row ─────────────────────────────────────────────
+
+  server.tool(
+    "lookup_row",
+    "Look up a structured data row by exact key (e.g. PROJ-44, ITEM-1234). Returns the canonical record from CSV/JSONL data. Use this when you have a known identifier — it's O(1) and deterministic, unlike search_documents which returns ranked results.",
+    {
+      key: z.string().describe("Exact row key to look up (case-insensitive)"),
+      doc_id: z
+        .string()
+        .optional()
+        .describe("Narrow lookup to a specific dataset document"),
+    },
+    async ({ key, doc_id }) => {
+      const result = store.lookupRow(key, doc_id);
+
+      if (!result) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `No row found for key "${key}".${doc_id ? ` (searched in ${doc_id})` : ""} Try search_documents("${key}") for a broader search.`,
+            },
+          ],
+        };
+      }
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `━━━ ${result.node.title} [${result.node.node_id}] ━━━\nSource: ${result.doc_id}\n\n${result.node.content}\n\nUse search_documents("${key}") to find related documents across all collections.`,
+          },
+        ],
+      };
+    }
+  );
+
+  // ── Tool 8: find_symbol ────────────────────────────────────────────
 
   server.tool(
     "find_symbol",

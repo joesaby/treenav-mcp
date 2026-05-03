@@ -22,6 +22,9 @@ import type {
   RankingParams,
   FilterIndex,
   FacetCounts,
+  GrepOptions,
+  GrepHit,
+  GrepOutcome,
 } from "./types";
 import { DEFAULT_RANKING } from "./types";
 import { extractGlossaryEntries } from "./indexer";
@@ -32,6 +35,8 @@ export class DocumentStore {
   // ── Positional inverted index (Pagefind-inspired) ───────────────
   // term → Posting[] (one entry per node the term appears in)
   private index: Map<string, Posting[]> = new Map();
+  // Sorted term list for O(log n) prefix lookups
+  private sortedTerms: string[] = [];
 
   // ── Per-node stats for BM25 length normalization ─────────────────
   private nodeStats: Map<string, NodeStats> = new Map();
@@ -59,7 +64,11 @@ export class DocumentStore {
   // like "CLI" also match "command line interface"
   private glossary: Map<string, string[]> = new Map();
 
-  // ── Ref map for cross-reference resolution ────────────────────────
+  // ── Row index for O(1) key→row lookup (structured data) ─────────
+  // normalized key → { doc_id, node_id }
+  private rowIndex: Map<string, { doc_id: string; node_id: string }> = new Map();
+
+  // ── Reference map for cross-document linking ────────────────────
   // basename(file_path) → { doc_id, tree }
   private refMap: Map<string, { doc_id: string; tree: TreeNode[] }> = new Map();
 
@@ -81,6 +90,7 @@ export class DocumentStore {
     this.buildFilterIndex();
     this.buildAutoGlossary(documents);
     this.buildRefMap();
+    this.buildRowIndex();
 
     console.log(
       `Store loaded: ${this.docs.size} docs, ${this.totalNodes} nodes, ` +
@@ -112,7 +122,6 @@ export class DocumentStore {
     this.indexDocument(doc);
     this.indexDocumentFilters(doc);
     this.recalcCorpusStats();
-    this.buildRefMap();
   }
 
   /**
@@ -206,83 +215,6 @@ export class DocumentStore {
       }
     }
     return [...expanded];
-  }
-
-  // ── Auto-glossary from content ────────────────────────────────────
-  //
-  private buildRefMap(): void {
-    this.refMap.clear();
-    for (const doc of this.docs.values()) {
-      const basename = doc.meta.file_path.split("/").pop() ?? doc.meta.file_path;
-      this.refMap.set(basename, { doc_id: doc.meta.doc_id, tree: doc.tree });
-    }
-  }
-
-  // Scan all document content for acronym definitions like
-  // "CLI (Command Line Interface)" and add them to the glossary.
-  // Does NOT overwrite entries from an explicitly loaded glossary file.
-
-  private buildAutoGlossary(documents: IndexedDocument[]): void {
-    const autoEntries: Record<string, string[]> = {};
-
-    for (const doc of documents) {
-      for (const node of doc.tree) {
-        const nodeEntries = extractGlossaryEntries(node.content);
-        for (const [acronym, expansions] of Object.entries(nodeEntries)) {
-          if (!autoEntries[acronym]) autoEntries[acronym] = [];
-          for (const exp of expansions) {
-            if (!autoEntries[acronym].includes(exp)) {
-              autoEntries[acronym].push(exp);
-            }
-          }
-        }
-      }
-      // Also check title and description
-      const metaEntries = extractGlossaryEntries(
-        `${doc.meta.title} ${doc.meta.description}`
-      );
-      for (const [acronym, expansions] of Object.entries(metaEntries)) {
-        if (!autoEntries[acronym]) autoEntries[acronym] = [];
-        for (const exp of expansions) {
-          if (!autoEntries[acronym].includes(exp)) {
-            autoEntries[acronym].push(exp);
-          }
-        }
-      }
-    }
-
-    // Merge auto-entries into the glossary without overwriting explicit entries
-    let added = 0;
-    for (const [key, expansions] of Object.entries(autoEntries)) {
-      const normalizedKey = key.toLowerCase();
-      for (const expansion of expansions) {
-        // Forward: acronym → expansion
-        if (!this.glossary.has(normalizedKey)) {
-          this.glossary.set(normalizedKey, [expansion]);
-          added++;
-        } else {
-          const existing = this.glossary.get(normalizedKey)!;
-          if (!existing.includes(expansion)) {
-            existing.push(expansion);
-            added++;
-          }
-        }
-        // Reverse: expansion terms → acronym
-        const expTokens = expansion.toLowerCase();
-        if (!this.glossary.has(expTokens)) {
-          this.glossary.set(expTokens, [normalizedKey]);
-        } else {
-          const existing = this.glossary.get(expTokens)!;
-          if (!existing.includes(normalizedKey)) {
-            existing.push(normalizedKey);
-          }
-        }
-      }
-    }
-
-    if (added > 0) {
-      console.log(`Auto-glossary: extracted ${added} entries from content`);
-    }
   }
 
   // ── Remove old postings for incremental update ──────────────────
@@ -467,6 +399,19 @@ export class DocumentStore {
 
     this.avgNodeLength =
       this.totalNodes > 0 ? totalTokens / this.totalNodes : 0;
+
+    this.sortedTerms = Array.from(this.index.keys()).sort();
+  }
+
+  /** Binary search for the first index where sortedTerms[i] >= prefix */
+  private prefixLowerBound(prefix: string): number {
+    let lo = 0, hi = this.sortedTerms.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (this.sortedTerms[mid] < prefix) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
   }
 
   // ── BM25 scoring (Pagefind v1.1+ alignment) ────────────────────
@@ -576,6 +521,8 @@ export class DocumentStore {
     }
 
     // Accumulate BM25 scores per node
+    const MAX_POSITIONS_PER_NODE = 30;
+    const MAX_PREFIX_TERMS = 50;
     const nodeScores: Map<
       string,
       {
@@ -614,17 +561,27 @@ export class DocumentStore {
           const entry = nodeScores.get(nodeKey)!;
           entry.score += bm25Score;
           entry.matchedTerms.add(term);
-          entry.positions.push(...posting.positions);
+          if (entry.positions.length < MAX_POSITIONS_PER_NODE) {
+            const remaining = MAX_POSITIONS_PER_NODE - entry.positions.length;
+            const slice = posting.positions.length <= remaining
+              ? posting.positions
+              : posting.positions.slice(0, remaining);
+            for (let i = 0; i < slice.length; i++) entry.positions.push(slice[i]);
+          }
         }
       }
 
-      // Prefix matching for partial terms
-      // (Pagefind does this at the chunk level; we iterate the in-memory index)
+      // Prefix matching via sorted term array (O(log n) lookup)
       if (term.length >= 3) {
-        for (const [indexedTerm, pfxPostings] of this.index) {
+        let prefixCount = 0;
+        const start = this.prefixLowerBound(term);
+        for (let ti = start; ti < this.sortedTerms.length; ti++) {
+          const indexedTerm = this.sortedTerms[ti];
+          if (!indexedTerm.startsWith(term)) break;
           if (indexedTerm === term) continue;
-          if (!indexedTerm.startsWith(term)) continue;
+          if (++prefixCount > MAX_PREFIX_TERMS) break;
 
+          const pfxPostings = this.index.get(indexedTerm)!;
           for (const posting of pfxPostings) {
             if (options?.doc_id && posting.doc_id !== options.doc_id) continue;
             if (filterWhitelist && !filterWhitelist.has(posting.doc_id))
@@ -652,7 +609,13 @@ export class DocumentStore {
             const entry = nodeScores.get(nodeKey)!;
             entry.score += bm25Score;
             entry.matchedTerms.add(term);
-            entry.positions.push(...posting.positions);
+            if (entry.positions.length < MAX_POSITIONS_PER_NODE) {
+              const remaining = MAX_POSITIONS_PER_NODE - entry.positions.length;
+              const slice = posting.positions.length <= remaining
+                ? posting.positions
+                : posting.positions.slice(0, remaining);
+              for (let i = 0; i < slice.length; i++) entry.positions.push(slice[i]);
+            }
           }
         }
       }
@@ -679,10 +642,16 @@ export class DocumentStore {
       }
     }
 
-    // Convert to SearchResult objects
+    // Sort by score and only convert top N to full SearchResult objects
+    const limit = options?.limit || 20;
+    const scored = Array.from(nodeScores.values());
+    scored.sort((a, b) => b.score - a.score);
+    const topN = scored.slice(0, limit);
+    nodeScores.clear();
+
     const results: SearchResult[] = [];
 
-    for (const [, entry] of nodeScores) {
+    for (const entry of topN) {
       const doc = this.docs.get(entry.doc_id);
       if (!doc) continue;
 
@@ -713,8 +682,7 @@ export class DocumentStore {
       });
     }
 
-    results.sort((a, b) => b.score - a.score);
-    return results.slice(0, options?.limit || 20);
+    return results;
   }
 
   // ── Catalog with facet counts (Pagefind filter UI equivalent) ───
@@ -851,6 +819,229 @@ export class DocumentStore {
     return { doc_id, nodes: result };
   }
 
+  // ── Auto-glossary extraction ────────────────────────────────────
+
+  private buildAutoGlossary(documents: IndexedDocument[]): void {
+    const autoEntries: Record<string, string[]> = {};
+
+    for (const doc of documents) {
+      for (const node of doc.tree) {
+        const nodeEntries = extractGlossaryEntries(node.content);
+        for (const [acronym, expansions] of Object.entries(nodeEntries)) {
+          if (!autoEntries[acronym]) autoEntries[acronym] = [];
+          for (const exp of expansions) {
+            if (!autoEntries[acronym].includes(exp)) {
+              autoEntries[acronym].push(exp);
+            }
+          }
+        }
+      }
+      const metaEntries = extractGlossaryEntries(
+        `${doc.meta.title} ${doc.meta.description}`
+      );
+      for (const [acronym, expansions] of Object.entries(metaEntries)) {
+        if (!autoEntries[acronym]) autoEntries[acronym] = [];
+        for (const exp of expansions) {
+          if (!autoEntries[acronym].includes(exp)) {
+            autoEntries[acronym].push(exp);
+          }
+        }
+      }
+    }
+
+    // Merge auto-entries into the glossary without overwriting explicit entries.
+    // Bidirectional: also add reverse mappings (expansion → acronym) so that
+    // searching for the long form also matches docs that use the short form.
+    let added = 0;
+    for (const [key, expansions] of Object.entries(autoEntries)) {
+      const normalizedKey = key.toLowerCase();
+      for (const expansion of expansions) {
+        // Forward: acronym → expansion
+        if (!this.glossary.has(normalizedKey)) {
+          this.glossary.set(normalizedKey, [expansion]);
+          added++;
+        } else {
+          const existing = this.glossary.get(normalizedKey)!;
+          if (!existing.includes(expansion)) {
+            existing.push(expansion);
+            added++;
+          }
+        }
+        // Reverse: expansion terms → acronym
+        const expTokens = expansion.toLowerCase();
+        if (!this.glossary.has(expTokens)) {
+          this.glossary.set(expTokens, [normalizedKey]);
+        } else {
+          const existing = this.glossary.get(expTokens)!;
+          if (!existing.includes(normalizedKey)) {
+            existing.push(normalizedKey);
+          }
+        }
+      }
+    }
+
+    if (added > 0) {
+      console.log(`Auto-glossary: extracted ${added} entries from content`);
+    }
+  }
+
+  // ── Row index for structured data ──────────────────────────────────
+
+  private buildRowIndex(): void {
+    this.rowIndex.clear();
+    for (const doc of this.docs.values()) {
+      const format = doc.meta.facets?.format;
+      if (!format || (!format.includes("csv") && !format.includes("jsonl"))) continue;
+
+      for (const node of doc.tree) {
+        if (node.level < 2) continue;
+        // Extract key: everything before " — " in the title
+        const dashIdx = node.title.indexOf(" — ");
+        const key = (dashIdx !== -1 ? node.title.slice(0, dashIdx) : node.title).trim().toUpperCase();
+        if (key && !this.rowIndex.has(key)) {
+          this.rowIndex.set(key, { doc_id: doc.meta.doc_id, node_id: node.node_id });
+        }
+      }
+    }
+    if (this.rowIndex.size > 0) {
+      console.log(`Row index: ${this.rowIndex.size} keys from structured data`);
+    }
+  }
+
+  lookupRow(key: string, docId?: string): { doc_id: string; node: TreeNode; facets: Record<string, string[]> } | null {
+    const normalizedKey = key.trim().toUpperCase();
+    const entry = this.rowIndex.get(normalizedKey);
+    if (!entry) return null;
+    if (docId && entry.doc_id !== docId) return null;
+
+    const doc = this.docs.get(entry.doc_id);
+    if (!doc) return null;
+
+    const node = doc.tree.find(n => n.node_id === entry.node_id);
+    if (!node) return null;
+
+    return { doc_id: entry.doc_id, node, facets: doc.meta.facets };
+  }
+
+  // ── Literal / regex scan over indexed content ─────────────────────
+  //
+  // Complement to searchDocuments (BM25). Use when the agent has an
+  // exact string, symbol, or regex to locate and doesn't want stemming
+  // or glossary expansion interfering.
+  //
+  // ReDoS guard: the scan honors a wall-clock budget and a per-line
+  // match cap. A malicious or pathological pattern cannot hang the
+  // server — it simply returns early with aborted=true.
+
+  grepDocuments(opts: GrepOptions): GrepOutcome {
+    const timeBudget = opts.time_budget_ms ?? 500;
+    const limit = opts.limit ?? 50;
+    const context = Math.max(0, Math.min(5, opts.context ?? 1));
+    const deadline = Date.now() + timeBudget;
+
+    const re = compileGrepRegex(opts);
+    const globMatcher = opts.path_glob ? new Bun.Glob(opts.path_glob) : null;
+    const filterWhitelist = opts.filters && Object.keys(opts.filters).length > 0
+      ? this.resolveFilters(opts.filters)
+      : null;
+
+    const hits: GrepHit[] = [];
+    let docsScanned = 0;
+    let nodesScanned = 0;
+    let aborted = false;
+    let truncated = false;
+    const CLOCK_CHECK_EVERY = 256; // amortize Date.now() calls
+    let linesSinceCheck = 0;
+
+    outer: for (const doc of this.docs.values()) {
+      if (opts.doc_id && doc.meta.doc_id !== opts.doc_id) continue;
+      if (filterWhitelist && !filterWhitelist.has(doc.meta.doc_id)) continue;
+      if (globMatcher && !globMatcher.match(doc.meta.file_path)) continue;
+      docsScanned++;
+
+      for (const node of doc.tree) {
+        nodesScanned++;
+        if (!node.content) continue;
+        const lines = node.content.split("\n");
+
+        for (let i = 0; i < lines.length; i++) {
+          if (++linesSinceCheck >= CLOCK_CHECK_EVERY) {
+            linesSinceCheck = 0;
+            if (Date.now() > deadline) {
+              aborted = true;
+              break outer;
+            }
+          }
+
+          if (!re.test(lines[i])) continue;
+
+          hits.push({
+            doc_id: doc.meta.doc_id,
+            file_path: doc.meta.file_path,
+            node_id: node.node_id,
+            node_title: node.title,
+            // node.line_start is the heading line; content begins on the next
+            line_no: node.line_start + 1 + i,
+            line: lines[i],
+            context_before: lines.slice(Math.max(0, i - context), i),
+            context_after: lines.slice(i + 1, i + 1 + context),
+          });
+
+          if (hits.length >= limit) {
+            truncated = true;
+            break outer;
+          }
+        }
+      }
+    }
+
+    return { hits, truncated, aborted, docs_scanned: docsScanned, nodes_scanned: nodesScanned };
+  }
+
+  // ── Reference map ─────────────────────────────────────────────────
+
+  private buildRefMap(): void {
+    this.refMap.clear();
+    for (const doc of this.docs.values()) {
+      const basename =
+        doc.meta.file_path.split("/").pop() ?? doc.meta.file_path;
+      this.refMap.set(basename, { doc_id: doc.meta.doc_id, tree: doc.tree });
+    }
+  }
+
+  // ── Public reference / meta methods ───────────────────────────────
+
+  resolveRef(path: string): { doc_id: string; node_id?: string } | null {
+    const [filePart, fragment] = path.split("#");
+    const basename = filePart.split("/").pop() ?? filePart;
+    const entry = this.refMap.get(basename);
+    if (!entry) return null;
+
+    if (!fragment) return { doc_id: entry.doc_id };
+
+    const slug = fragment
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "");
+    const node = entry.tree.find((n) => {
+      const nodeSlug = n.title
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "");
+      return nodeSlug === slug || n.node_id === fragment;
+    });
+
+    return { doc_id: entry.doc_id, node_id: node?.node_id };
+  }
+
+  getDocMeta(doc_id: string): DocumentMeta | null {
+    return this.docs.get(doc_id)?.meta ?? null;
+  }
+
+  getGlossaryTerms(): string[] {
+    return [...this.glossary.keys()];
+  }
+
   // ── Stats ───────────────────────────────────────────────────────
 
   getStats(): {
@@ -896,45 +1087,37 @@ export class DocumentStore {
   hasDocument(doc_id: string): boolean {
     return this.docs.has(doc_id);
   }
+}
 
-  /**
-   * Return the set of known glossary terms (abbreviations + expanded forms).
-   * Used by the curator to flag glossary hits in raw source content.
-   */
-  getGlossaryTerms(): string[] {
-    return [...this.glossary.keys()];
+// ── Grep regex compilation ──────────────────────────────────────────
+//
+// Wraps RegExp construction so the caller gets a clear error for invalid
+// patterns and so we can apply cheap static guards before running the
+// regex against the corpus.
+
+// Cheap static guards against the most common catastrophic-backtracking shapes.
+// Not exhaustive (static ReDoS detection is undecidable in general), but blocks
+// the patterns most likely to hang the scan: lookarounds and a group that
+// contains a quantifier and is itself quantified, e.g. (a+)+ or (a*b)+.
+const DANGEROUS_PATTERN =
+  /(\(\?[=!])|(\(\?<[=!])|(\([^)]*[*+?}][^)]*\)\s*[*+{?])/;
+
+function compileGrepRegex(opts: GrepOptions): RegExp {
+  const src = opts.regex ? opts.pattern : escapeRegex(opts.pattern);
+  if (opts.regex && DANGEROUS_PATTERN.test(opts.pattern)) {
+    throw new Error(
+      "Pattern contains constructs that can cause catastrophic backtracking (nested quantifiers or lookarounds). Use a simpler regex, or pass regex=false for literal matching."
+    );
   }
-
-  /**
-   * Resolve a markdown cross-reference path to a doc_id and optional node_id.
-   * Path may be a basename ("admin-guide.md"), relative ("../foo/admin-guide.md"),
-   * or include a heading fragment ("admin-guide.md#user-provisioning").
-   * Returns null if the file cannot be matched to any indexed document.
-   */
-  resolveRef(path: string): { doc_id: string; node_id?: string } | null {
-    const [filePart, fragment] = path.split("#");
-    const basename = filePart.split("/").pop() ?? filePart;
-    const entry = this.refMap.get(basename);
-    if (!entry) return null;
-
-    if (!fragment) return { doc_id: entry.doc_id };
-
-    // Match fragment to node via title slug (GitHub-style: lowercase, non-alphanumeric → hyphen)
-    const slug = fragment.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-    const node = entry.tree.find((n) => {
-      const nodeSlug = n.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-      return nodeSlug === slug || n.node_id === fragment;
-    });
-
-    return { doc_id: entry.doc_id, node_id: node?.node_id };
+  try {
+    return new RegExp(src, opts.case_insensitive ? "i" : "");
+  } catch (err: any) {
+    throw new Error(`Invalid regex: ${err.message}`);
   }
+}
 
-  /**
-   * Return the DocumentMeta for a doc_id, or null if not found.
-   */
-  getDocMeta(doc_id: string): DocumentMeta | null {
-    return this.docs.get(doc_id)?.meta ?? null;
-  }
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 // ── Tokenization ─────────────────────────────────────────────────────

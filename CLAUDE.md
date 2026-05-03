@@ -2,25 +2,28 @@
 
 ## Project Overview
 
-treenav-mcp is an MCP (Model Context Protocol) server that provides BM25 search and hierarchical tree navigation over markdown documentation and source code. Agents get a table of contents they can reason over — for both docs and code — then retrieve only the sections or symbols they need. Supports AST-based code navigation for TypeScript, Python, Go, Rust, Java, C/C++, and more. No vector DB, no embeddings, no LLM calls at index or retrieval time.
+treenav-mcp is an MCP (Model Context Protocol) server that provides BM25 search, literal/regex grep, and hierarchical tree navigation over markdown documentation, source code, and structured data (CSV/JSONL). Agents get a table of contents they can reason over — for docs, code, and tabular data — then retrieve only the sections, symbols, or rows they need. Supports AST-based code navigation for TypeScript, Python, Go, Rust, Java, C/C++, and more. No vector DB, no embeddings, no LLM calls at index or retrieval time.
 
 ## Architecture
 
 ```
 src/
-├── indexer.ts        # Markdown → tree nodes + frontmatter extraction + facets
+├── indexer.ts        # Markdown / CSV / JSONL → tree nodes + facets + content hash
 ├── code-indexer.ts   # Source code → tree nodes via AST parsing
 ├── parsers/
 │   ├── typescript.ts # TS/JS regex-based AST extraction
 │   ├── python.ts     # Python indentation-based symbol extraction
 │   └── generic.ts    # Fallback for Go, Rust, Java, C, Ruby, etc.
-├── store.ts          # In-memory BM25 search engine + filter facets + glossary
+├── store.ts          # In-memory BM25 + grep engine, facets, glossary, row index
 ├── curator.ts        # Opt-in write-side curation (find_similar, draft, write)
 ├── types.ts          # All TypeScript interfaces and ranking defaults
 ├── tools.ts          # Shared MCP tool registration (read tools + optional curation)
-├── server.ts         # MCP stdio server (6 read tools + optional 3 curation tools)
+├── prompts.ts        # MCP prompts for doc-read / doc-write / doc-lint workflows
+├── server.ts         # MCP stdio server (8 read tools + optional 3 curation tools)
 ├── server-http.ts    # MCP HTTP/Streamable HTTP server variant
-└── cli-index.ts      # CLI debugging tool for inspecting indexed output
+├── cli-index.ts      # CLI debugging tool for inspecting indexed output
+├── cli-init.ts       # `bunx treenav-mcp init` — wires up host config + skills
+└── cli-lint.ts       # `bunx treenav-mcp lint` — checks wiki frontmatter / paths
 ```
 
 ### Key Design Decisions
@@ -67,7 +70,8 @@ A GitHub Release is created automatically with generated release notes. Docker H
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DOCS_ROOT` | `./docs` | Path to markdown repository |
-| `DOCS_GLOB` | `**/*.md` | File glob pattern |
+| `DOCS_GLOB` | `**/*.md` | File glob (comma-separated for multi-glob, e.g. `**/*.md,**/*.csv,**/*.jsonl`) |
+| `CSV_MAX_TEXT_LENGTH` | `2000` | Max chars indexed per text field in CSV/JSONL rows |
 | `MAX_DEPTH` | `6` | Max heading depth to index |
 | `SUMMARY_LENGTH` | `200` | Characters in node summaries |
 | `PORT` | `3100` | HTTP server port |
@@ -100,16 +104,25 @@ Read tools (always available):
 
 1. **`list_documents`** — Browse catalog with tag/keyword filtering, returns facet counts
 2. **`search_documents`** — BM25 keyword search with facet filters and glossary expansion
-3. **`get_tree`** — Hierarchical outline (no content) for agent reasoning
-4. **`get_node_content`** — Retrieve full text of specific sections by node ID
-5. **`navigate_tree`** — Get a section and all descendants in one call
-6. **`find_symbol`** — Search code symbols by name, kind (`class`/`function`/`interface`/etc.), and language (requires `CODE_ROOT`)
+3. **`grep_documents`** — Literal or regex match across indexed content (the `grep -n` of the index). Use when you know the exact symbol/error/CLI flag and don't want stemming or glossary expansion.
+4. **`get_tree`** — Hierarchical outline (no content) for agent reasoning
+5. **`get_node_content`** — Retrieve full text of specific sections by node ID
+6. **`navigate_tree`** — Get a section and all descendants in one call
+7. **`lookup_row`** — O(1) key→row lookup for indexed CSV/JSONL data (e.g. `PROJ-44`, `ITEM-1234`)
+8. **`find_symbol`** — Search code symbols by name, kind (`class`/`function`/`interface`/etc.), and language (requires `CODE_ROOT`)
 
 Curation tools (only when `WIKI_WRITE=1`):
 
-7. **`find_similar`** — BM25 dedupe check for prospective content
-8. **`draft_wiki_entry`** — Structural scaffold for a new entry (no write)
-9. **`write_wiki_entry`** — Validated write + incremental re-index
+9.  **`find_similar`** — BM25 dedupe check for prospective content
+10. **`draft_wiki_entry`** — Structural scaffold for a new entry (no write)
+11. **`write_wiki_entry`** — Validated write + incremental re-index
+
+### CLI Wrappers
+
+The package also exposes two CLI subcommands (run via `bunx treenav-mcp …` or via the published bin):
+
+- `treenav-mcp init` — interactive wiring of host MCP config (Claude Code, Claude Desktop, Cursor, OpenCode, Codex), plus per-host skill / hook installation
+- `treenav-mcp lint` — checks wiki frontmatter, path containment, and reserved-key violations
 
 The curation toolset lets a calling agent author new wiki entries while treenav enforces path containment, frontmatter schema, and duplicate thresholds. All LLM work stays in the calling agent — treenav itself performs zero LLM calls. See [docs/adr/0001-llm-curated-wiki.md](docs/adr/0001-llm-curated-wiki.md) and [docs/wiki-curation-spec.md](docs/wiki-curation-spec.md).
 
