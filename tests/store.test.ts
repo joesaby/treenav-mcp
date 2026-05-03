@@ -928,6 +928,146 @@ describe("definition boost", () => {
   });
 });
 
+// ── Noise penalty ───────────────────────────────────────────────────
+
+describe("noise penalty", () => {
+  let store: DocumentStore;
+
+  beforeEach(() => {
+    store = new DocumentStore();
+  });
+
+  function authDoc(file_path: string, doc_id: string): IndexedDocument {
+    return makeDoc({
+      meta: {
+        doc_id,
+        file_path,
+        collection: "code",
+        title: file_path,
+      },
+      tree: [
+        makeNode({
+          node_id: `${doc_id}:n1`,
+          title: "function authenticate",
+          content: "function authenticate(user, pass) { return checkCredentials(user, pass); }",
+          symbol_kind: "function",
+          symbol_name: "authenticate",
+        }),
+      ],
+      root_nodes: [`${doc_id}:n1`],
+    });
+  }
+
+  test("matching path gets score multiplied by penalty", () => {
+    store.load([
+      authDoc("src/auth.ts", "code:src"),
+      authDoc("src/auth.test.ts", "code:test"),
+    ]);
+
+    const baseline = store.searchDocuments("authenticate");
+    const baselineSrc = baseline.find((r) => r.doc_id === "code:src")!.score;
+    const baselineTest = baseline.find((r) => r.doc_id === "code:test")!.score;
+    expect(baselineSrc).toBeCloseTo(baselineTest, 3);
+
+    store.setNoisePatterns({
+      code: [{ pattern: "\\.test\\.[a-z]+$", penalty: 0.5 }],
+    });
+
+    const penalized = store.searchDocuments("authenticate");
+    const srcScore = penalized.find((r) => r.doc_id === "code:src")!.score;
+    const testScore = penalized.find((r) => r.doc_id === "code:test")!.score;
+
+    expect(srcScore).toBeCloseTo(baselineSrc, 3);
+    expect(testScore).toBeCloseTo(baselineTest * 0.5, 3);
+    expect(penalized[0].doc_id).toBe("code:src");
+  });
+
+  test("multiple matching patterns: lowest penalty wins (no compounding)", () => {
+    const baseline = new DocumentStore();
+    baseline.load([authDoc("legacy/__tests__/auth.test.ts", "code:multi")]);
+    const baseScore = baseline.searchDocuments("authenticate")[0].score;
+
+    store.load([authDoc("legacy/__tests__/auth.test.ts", "code:multi")]);
+    store.setNoisePatterns({
+      code: [
+        { pattern: "(^|/)legacy/", penalty: 0.6 },
+        { pattern: "(^|/)__tests__/", penalty: 0.5 },
+        { pattern: "\\.test\\.[a-z]+$", penalty: 0.4 },
+      ],
+    });
+
+    const penalized = store.searchDocuments("authenticate")[0].score;
+
+    // Lowest penalty (0.4) wins; multiplicative compounding (0.6 * 0.5 * 0.4 = 0.12) would be wrong
+    expect(penalized).toBeCloseTo(baseScore * 0.4, 3);
+  });
+
+  test("collections without patterns set are unaffected", () => {
+    const codeTest = makeDoc({
+      meta: { doc_id: "code:test", file_path: "auth.test.ts", collection: "code" },
+      tree: [makeNode({
+        node_id: "code:test:n1",
+        title: "function authenticate",
+        content: "function authenticate() { return true; }",
+        symbol_kind: "function",
+        symbol_name: "authenticate",
+      })],
+      root_nodes: ["code:test:n1"],
+    });
+    const mdLegacy = makeDoc({
+      meta: { doc_id: "docs:legacy", file_path: "legacy/auth.md", collection: "docs" },
+      tree: [makeNode({ node_id: "docs:legacy:n1", title: "Authenticate Users", content: "How to authenticate users in the legacy system." })],
+      root_nodes: ["docs:legacy:n1"],
+    });
+
+    store.load([codeTest, mdLegacy]);
+
+    const baseline = store.searchDocuments("authenticate");
+    const baselineMd = baseline.find((r) => r.doc_id === "docs:legacy")!.score;
+
+    // Pattern set only for "code" — markdown collection has no entry, must be untouched
+    store.setNoisePatterns({
+      code: [{ pattern: "\\.test\\.[a-z]+$", penalty: 0.3 }],
+    });
+
+    const after = store.searchDocuments("authenticate");
+    const afterMd = after.find((r) => r.doc_id === "docs:legacy")!.score;
+
+    expect(afterMd).toBeCloseTo(baselineMd, 3);
+  });
+
+  test("non-matching paths in a penalized collection are unaffected", () => {
+    store.load([authDoc("src/auth.ts", "code:src")]);
+
+    const baseline = store.searchDocuments("authenticate")[0].score;
+
+    store.setNoisePatterns({
+      code: [{ pattern: "\\.test\\.[a-z]+$", penalty: 0.3 }],
+    });
+
+    const after = store.searchDocuments("authenticate")[0].score;
+    expect(after).toBeCloseTo(baseline, 3);
+  });
+
+  test("setNoisePatterns is replacing, not additive", () => {
+    store.load([authDoc("src/auth.test.ts", "code:test")]);
+
+    const baseline = store.searchDocuments("authenticate")[0].score;
+
+    store.setNoisePatterns({
+      code: [{ pattern: "\\.test\\.[a-z]+$", penalty: 0.5 }],
+    });
+    const half = store.searchDocuments("authenticate")[0].score;
+    expect(half).toBeCloseTo(baseline * 0.5, 3);
+
+    store.setNoisePatterns({
+      code: [{ pattern: "\\.test\\.[a-z]+$", penalty: 0.1 }],
+    });
+    const tenth = store.searchDocuments("authenticate")[0].score;
+    expect(tenth).toBeCloseTo(baseline * 0.1, 3);
+  });
+});
+
 // ── resolveRef ──────────────────────────────────────────────────────
 
 describe("resolveRef", () => {

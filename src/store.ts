@@ -25,6 +25,7 @@ import type {
   GrepOptions,
   GrepHit,
   GrepOutcome,
+  NoisePattern,
 } from "./types";
 import { DEFAULT_RANKING } from "./types";
 import { extractGlossaryEntries } from "./indexer";
@@ -55,6 +56,12 @@ export class DocumentStore {
 
   // ── Collection weights (Pagefind multisite/indexWeight inspired) ──
   private collectionWeights: Map<string, number> = new Map();
+
+  // ── Noise patterns per collection (Semble-inspired) ──────────────
+  // Pre-compiled at setNoisePatterns() time so the scoring hot path
+  // doesn't construct RegExp per doc per query.
+  private noisePatterns: Map<string, { regex: RegExp; penalty: number }[]> =
+    new Map();
 
   // ── Ranking parameters (Pagefind-style configurable knobs) ───────
   private ranking: RankingParams = { ...DEFAULT_RANKING };
@@ -158,6 +165,26 @@ export class DocumentStore {
   setCollectionWeights(weights: Record<string, number>): void {
     for (const [name, weight] of Object.entries(weights)) {
       this.collectionWeights.set(name, weight);
+    }
+  }
+
+  /**
+   * Set per-collection noise patterns. Patterns are compiled once and applied
+   * to docs in the named collection at scoring time. When multiple patterns
+   * match a single doc, the lowest penalty wins (penalties do not compound).
+   *
+   * Each call replaces the patterns for the named collections — to clear
+   * patterns for a collection, pass `{ name: [] }`. Collections not present
+   * in the argument retain their existing patterns.
+   */
+  setNoisePatterns(
+    patterns: Record<string, NoisePattern[]>,
+  ): void {
+    for (const [name, list] of Object.entries(patterns)) {
+      this.noisePatterns.set(
+        name,
+        list.map((p) => ({ regex: new RegExp(p.pattern), penalty: p.penalty })),
+      );
     }
   }
 
@@ -641,6 +668,19 @@ export class DocumentStore {
         const node = doc.tree.find((n) => n.node_id === entry.node_id);
         if (node && isDefinitionMatch(node, queryTerms, this.glossary)) {
           entry.score *= this.ranking.definition_boost;
+        }
+
+        // Apply noise penalty: down-rank tests / .d.ts / legacy paths in code
+        // collections. Lowest matching penalty wins; penalties do NOT compound.
+        const collectionPatterns = this.noisePatterns.get(doc.meta.collection);
+        if (collectionPatterns && collectionPatterns.length > 0) {
+          let lowestPenalty = 1.0;
+          for (const { regex, penalty } of collectionPatterns) {
+            if (regex.test(doc.meta.file_path) && penalty < lowestPenalty) {
+              lowestPenalty = penalty;
+            }
+          }
+          if (lowestPenalty < 1.0) entry.score *= lowestPenalty;
         }
 
         // Apply collection weight (Pagefind indexWeight equivalent)
