@@ -14,18 +14,45 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { DocumentStore } from "./store";
 import { indexAllCollections } from "./indexer";
 import { singleRootConfig } from "./types";
-import { registerTools } from "./tools";
-import type { WikiOptions } from "./curator";
 import type { IndexConfig } from "./types";
+import type { WikiOptions } from "./curator";
+import { registerTools } from "./tools";
+import { registerPrompts } from "./prompts";
 
 const docs_root = process.env.DOCS_ROOT || "./docs";
 const config: IndexConfig = singleRootConfig(docs_root);
 config.max_depth = parseInt(process.env.MAX_DEPTH || "6");
 config.summary_length = parseInt(process.env.SUMMARY_LENGTH || "200");
 
+// Multi-glob support: DOCS_GLOB=**/*.md,**/*.csv,**/*.jsonl
+const docsGlob = process.env.DOCS_GLOB;
+if (docsGlob) {
+  const patterns = docsGlob.split(",").map((p) => p.trim()).filter(Boolean);
+  if (patterns.length > 0) {
+    config.collections[0].glob_patterns = patterns;
+    config.collections[0].glob_pattern = undefined;
+  }
+}
+
+// Code collection: set CODE_ROOT to enable AST-based code indexing
+const code_root = process.env.CODE_ROOT;
+if (code_root) {
+  config.code_collections = [
+    {
+      name: process.env.CODE_COLLECTION || "code",
+      root: code_root,
+      weight: parseFloat(process.env.CODE_WEIGHT || "1.0"),
+      glob_pattern: process.env.CODE_GLOB,
+    },
+  ];
+}
+
 const PORT = parseInt(process.env.PORT || "3100");
 
-// Wiki curation toolset — opt-in via WIKI_WRITE=1
+const store = new DocumentStore();
+
+// ── Wiki configuration (opt-in) ─────────────────────────────────────
+
 let wiki: WikiOptions | undefined;
 if (process.env.WIKI_WRITE === "1") {
   const wikiRoot = resolve(process.env.WIKI_ROOT || docs_root);
@@ -36,18 +63,13 @@ if (process.env.WIKI_WRITE === "1") {
       process.env.WIKI_DUPLICATE_THRESHOLD || "0.35"
     ),
   };
-  console.log(`[wiki-write] write mode enabled; wiki root is ${wikiRoot}`);
 }
 
-const store = new DocumentStore();
-
 async function main() {
-  // Index documents
   console.log(`Indexing from ${docs_root}...`);
   const documents = await indexAllCollections(config);
   store.load(documents);
 
-  // Load glossary if present
   const glossaryPath = process.env.GLOSSARY_PATH || join(docs_root, "glossary.json");
   if (existsSync(glossaryPath)) {
     try {
@@ -64,15 +86,15 @@ async function main() {
     `Indexed: ${stats.document_count} docs, ${stats.total_nodes} sections`
   );
 
-  // Create a new MCP server per request for stateless operation
-  // In production you'd want session tracking for stateful mode
+  if (wiki) {
+    console.log(`Wiki write enabled — root: ${wiki.root}`);
+  }
 
   Bun.serve({
     port: PORT,
     async fetch(req) {
       const url = new URL(req.url);
 
-      // Health check
       if (url.pathname === "/health") {
         return Response.json({
           status: "ok",
@@ -80,23 +102,13 @@ async function main() {
         });
       }
 
-      // MCP endpoint
       if (url.pathname === "/mcp") {
-        // For each incoming request, create server + transport
-        // This is the stateless pattern from the MCP SDK docs
-        const server = new McpServer({
-          name: "treenav-mcp",
-          version: "1.0.0",
-        });
-        registerTools(server, store, { wiki });
-
+        const server = createMcpServer(store, wiki);
         const transport = new WebStandardStreamableHTTPServerTransport({
-          sessionIdGenerator: undefined, // stateless
+          sessionIdGenerator: undefined,
         });
 
         await server.connect(transport);
-
-        // Handle the request through the transport
         return transport.handleRequest(req);
       }
 
@@ -106,6 +118,19 @@ async function main() {
 
   console.log(`MCP HTTP server running on http://localhost:${PORT}/mcp`);
   console.log(`Health check: http://localhost:${PORT}/health`);
+}
+
+/** Factory: creates a configured MCP server instance with all tools */
+function createMcpServer(store: DocumentStore, wiki?: WikiOptions): McpServer {
+  const server = new McpServer({
+    name: "treenav-mcp",
+    version: "1.0.0",
+  });
+
+  registerTools(server, store, { wiki });
+  registerPrompts(server, { wikiEnabled: !!wiki });
+
+  return server;
 }
 
 main().catch(console.error);

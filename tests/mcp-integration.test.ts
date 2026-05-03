@@ -202,7 +202,7 @@ describe("MCP tool discovery", () => {
     if (harness) await harness.cleanup();
   });
 
-  test("listTools returns all 6 tools", async () => {
+  test("listTools returns all read tools", async () => {
     harness = await createMcpTestClient(allDocs());
     const { tools } = await harness.client.listTools();
 
@@ -211,7 +211,9 @@ describe("MCP tool discovery", () => {
       "find_symbol",
       "get_node_content",
       "get_tree",
+      "grep_documents",
       "list_documents",
+      "lookup_row",
       "navigate_tree",
       "search_documents",
     ]);
