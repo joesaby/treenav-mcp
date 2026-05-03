@@ -39,6 +39,13 @@ export class DocumentStore {
   // Sorted term list for O(log n) prefix lookups
   private sortedTerms: string[] = [];
 
+  // ── Subtoken inverted index (Semble-inspired identifier-stem matching) ─
+  // Populated only for code nodes (symbol_kind set). Maps a stemmed
+  // subtoken (e.g. "frontmatter" from "parseFrontmatter") → postings.
+  // Looked up at search time and weighted by subtoken_weight; matches
+  // count toward term_proximity_bonus but NOT full_coverage_bonus.
+  private subtokenIndex: Map<string, Posting[]> = new Map();
+
   // ── Per-node stats for BM25 length normalization ─────────────────
   private nodeStats: Map<string, NodeStats> = new Map();
 
@@ -84,6 +91,7 @@ export class DocumentStore {
   load(documents: IndexedDocument[]): void {
     this.docs.clear();
     this.index.clear();
+    this.subtokenIndex.clear();
     this.nodeStats.clear();
     this.filters.clear();
     this.contentHashes.clear();
@@ -249,13 +257,23 @@ export class DocumentStore {
   private removeDocumentPostings(doc: IndexedDocument): void {
     const docId = doc.meta.doc_id;
 
-    // Remove from inverted index
+    // Remove from main inverted index
     for (const [term, postings] of this.index) {
       const filtered = postings.filter((p) => p.doc_id !== docId);
       if (filtered.length === 0) {
         this.index.delete(term);
       } else {
         this.index.set(term, filtered);
+      }
+    }
+
+    // Remove from subtoken index (parallel structure)
+    for (const [term, postings] of this.subtokenIndex) {
+      const filtered = postings.filter((p) => p.doc_id !== docId);
+      if (filtered.length === 0) {
+        this.subtokenIndex.delete(term);
+      } else {
+        this.subtokenIndex.set(term, filtered);
       }
     }
 
@@ -361,6 +379,35 @@ export class DocumentStore {
         }
         this.index.get(term)!.push(posting);
       }
+
+      // Subtoken indexing — code nodes only. Operates on the RAW (un-lowercased)
+      // title and content so camelCase splits remain visible. Subtokens equal
+      // to an existing exact term are skipped to avoid double-counting.
+      if (node.symbol_kind !== undefined) {
+        const exactTerms = new Set(termPositions.keys());
+        const subtokenFreq: Map<string, number> = new Map();
+        for (const ident of extractIdentifiers(node.title + " " + node.content)) {
+          for (const sub of identifierSubtokens(ident)) {
+            const stemmed = stem(sub);
+            if (stemmed.length < 2) continue;
+            if (exactTerms.has(stemmed)) continue;
+            subtokenFreq.set(stemmed, (subtokenFreq.get(stemmed) ?? 0) + 1);
+          }
+        }
+        for (const [term, tf] of subtokenFreq) {
+          const posting: Posting = {
+            doc_id: doc.meta.doc_id,
+            node_id: node.node_id,
+            positions: [], // subtoken postings carry no positional info
+            term_frequency: tf,
+            weight: 1.0,
+          };
+          if (!this.subtokenIndex.has(term)) {
+            this.subtokenIndex.set(term, []);
+          }
+          this.subtokenIndex.get(term)!.push(posting);
+        }
+      }
     }
   }
 
@@ -452,10 +499,28 @@ export class DocumentStore {
     posting: Posting,
     nodeLength: number
   ): number {
-    const { bm25_k1: k1, bm25_b: b } = this.ranking;
-    const N = this.totalNodes;
     const postings = this.index.get(term);
     const n = postings ? postings.length : 0;
+    return this.computeBM25Raw(posting, nodeLength, n);
+  }
+
+  private computeBM25Subtoken(
+    term: string,
+    posting: Posting,
+    nodeLength: number
+  ): number {
+    const postings = this.subtokenIndex.get(term);
+    const n = postings ? postings.length : 0;
+    return this.computeBM25Raw(posting, nodeLength, n);
+  }
+
+  private computeBM25Raw(
+    posting: Posting,
+    nodeLength: number,
+    n: number,
+  ): number {
+    const { bm25_k1: k1, bm25_b: b } = this.ranking;
+    const N = this.totalNodes;
 
     // IDF: how rare is this term across all nodes?
     const idf = Math.log((N - n + 0.5) / (n + 0.5) + 1);
@@ -547,7 +612,14 @@ export class DocumentStore {
       }
     }
 
-    // Accumulate BM25 scores per node
+    // Accumulate BM25 scores per node.
+    //
+    // matchedTerms = union of exact + prefix + subtoken matches
+    //   (used by term_proximity_bonus — recall-oriented, every kind counts).
+    // exactTerms   = exact + prefix matches only
+    //   (used by full_coverage_bonus — precision-oriented, subtokens excluded
+    //    so multi-subtoken queries can't spoof full coverage from a single
+    //    identifier like parseFrontmatter).
     const MAX_POSITIONS_PER_NODE = 30;
     const MAX_PREFIX_TERMS = 50;
     const nodeScores: Map<
@@ -555,6 +627,7 @@ export class DocumentStore {
       {
         score: number;
         matchedTerms: Set<string>;
+        exactTerms: Set<string>;
         positions: number[];
         doc_id: string;
         node_id: string;
@@ -579,6 +652,7 @@ export class DocumentStore {
             nodeScores.set(nodeKey, {
               score: 0,
               matchedTerms: new Set(),
+              exactTerms: new Set(),
               positions: [],
               doc_id: posting.doc_id,
               node_id: posting.node_id,
@@ -588,6 +662,7 @@ export class DocumentStore {
           const entry = nodeScores.get(nodeKey)!;
           entry.score += bm25Score;
           entry.matchedTerms.add(term);
+          entry.exactTerms.add(term);
           if (entry.positions.length < MAX_POSITIONS_PER_NODE) {
             const remaining = MAX_POSITIONS_PER_NODE - entry.positions.length;
             const slice = posting.positions.length <= remaining
@@ -627,6 +702,7 @@ export class DocumentStore {
               nodeScores.set(nodeKey, {
                 score: 0,
                 matchedTerms: new Set(),
+                exactTerms: new Set(),
                 positions: [],
                 doc_id: posting.doc_id,
                 node_id: posting.node_id,
@@ -636,6 +712,9 @@ export class DocumentStore {
             const entry = nodeScores.get(nodeKey)!;
             entry.score += bm25Score;
             entry.matchedTerms.add(term);
+            // Prefix is a stem-equivalent of the exact term — count toward
+            // exactTerms for full_coverage_bonus purposes.
+            entry.exactTerms.add(term);
             if (entry.positions.length < MAX_POSITIONS_PER_NODE) {
               const remaining = MAX_POSITIONS_PER_NODE - entry.positions.length;
               const slice = posting.positions.length <= remaining
@@ -643,6 +722,44 @@ export class DocumentStore {
                 : posting.positions.slice(0, remaining);
               for (let i = 0; i < slice.length; i++) entry.positions.push(slice[i]);
             }
+          }
+        }
+      }
+
+      // Subtoken matching — code nodes only, populated at index time.
+      // Subtoken contributions are weighted by subtoken_weight and DO NOT
+      // count toward exactTerms (so full_coverage_bonus can't be spoofed
+      // by a single multi-part identifier).
+      if (this.ranking.subtoken_weight > 0) {
+        const subPostings = this.subtokenIndex.get(term);
+        if (subPostings) {
+          for (const posting of subPostings) {
+            if (options?.doc_id && posting.doc_id !== options.doc_id) continue;
+            if (filterWhitelist && !filterWhitelist.has(posting.doc_id)) continue;
+
+            const nodeKey = `${posting.doc_id}::${posting.node_id}`;
+            const stats = this.nodeStats.get(nodeKey);
+            if (!stats) continue;
+
+            const bm25Score =
+              this.computeBM25Subtoken(term, posting, stats.total_tokens) *
+              this.ranking.subtoken_weight;
+
+            if (!nodeScores.has(nodeKey)) {
+              nodeScores.set(nodeKey, {
+                score: 0,
+                matchedTerms: new Set(),
+                exactTerms: new Set(),
+                positions: [],
+                doc_id: posting.doc_id,
+                node_id: posting.node_id,
+              });
+            }
+
+            const entry = nodeScores.get(nodeKey)!;
+            entry.score += bm25Score;
+            entry.matchedTerms.add(term);
+            // Deliberately NOT added to entry.exactTerms.
           }
         }
       }
@@ -656,7 +773,13 @@ export class DocumentStore {
         entry.score += (matchCount - 1) * this.ranking.term_proximity_bonus;
       }
 
-      if (matchCount === uniqueTerms.length && uniqueTerms.length > 1) {
+      // full_coverage uses exactTerms (precision) — subtoken matches are
+      // excluded so a single multi-part identifier can't spoof full coverage
+      // for a multi-term query.
+      if (
+        entry.exactTerms.size === uniqueTerms.length &&
+        uniqueTerms.length > 1
+      ) {
         entry.score += this.ranking.full_coverage_bonus;
       }
 
@@ -1229,6 +1352,43 @@ function compileGrepRegex(opts: GrepOptions): RegExp {
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// ── Subtoken extraction (Semble-inspired identifier-stem matching) ──
+//
+// Operates on raw (un-lowercased) text so camelCase splits remain visible.
+// Three layers of splitting:
+//   1. Word boundary: `[A-Za-z0-9_-]+` runs are extracted as candidates.
+//   2. Snake/kebab-case: each candidate split on `_` and `-`.
+//   3. CamelCase / digit-runs: `/[A-Z]?[a-z]+|[A-Z]+(?=[A-Z]|$)|[0-9]+/g`
+//      catches `parseFrontmatter` → [parse, Frontmatter] and
+//      `URLParser` → [URL, Parser].
+// Returns lowercased subtokens, or [] if the identifier has fewer than 2
+// distinct subtokens (i.e. it's a plain single word).
+
+const IDENTIFIER_REGEX = /[A-Za-z0-9_-]{2,}/g;
+const CAMEL_OR_DIGIT_REGEX = /[A-Z]?[a-z]+|[A-Z]+(?=[A-Z]|$)|[0-9]+/g;
+
+function extractIdentifiers(text: string): string[] {
+  return text.match(IDENTIFIER_REGEX) ?? [];
+}
+
+function identifierSubtokens(identifier: string): string[] {
+  const subs: string[] = [];
+  for (const piece of identifier.split(/[_-]/)) {
+    if (!piece) continue;
+    const matches = piece.match(CAMEL_OR_DIGIT_REGEX);
+    if (matches) subs.push(...matches);
+  }
+  // Need at least 2 subtokens to qualify (otherwise it's the same as the
+  // already-indexed exact token — would be double-counted).
+  if (subs.length < 2) return [];
+  const lowered = subs.map((s) => s.toLowerCase());
+  // Filter: drop subtokens identical to the full identifier (defensive —
+  // shouldn't happen given the < 2 check above, but covers edge cases like
+  // numeric-only identifiers).
+  const idLower = identifier.toLowerCase();
+  return lowered.filter((s) => s.length >= 2 && s !== idLower);
 }
 
 // ── Definition-kind check for definition_boost ──────────────────────
