@@ -1238,6 +1238,211 @@ describe("file coherence", () => {
   });
 });
 
+// ── Subtoken indexing ───────────────────────────────────────────────
+
+describe("subtoken indexing", () => {
+  let store: DocumentStore;
+
+  beforeEach(() => {
+    store = new DocumentStore();
+  });
+
+  function codeNode(node_id: string, title: string, content: string): TreeNode {
+    return makeNode({
+      node_id,
+      title,
+      content,
+      symbol_kind: "function",
+      symbol_name: title.replace(/^\w+\s+/, ""), // strip kind prefix
+    });
+  }
+
+  test("middle subtoken matches a camelCase identifier", () => {
+    // 'frontmatter' is a middle subtoken of parseFrontmatter;
+    // existing prefix matching would NOT catch it (prefix only matches starts).
+    store.load([
+      makeDoc({
+        meta: { doc_id: "code:a", file_path: "a.ts", collection: "code" },
+        tree: [codeNode("code:a:n1", "function parseFrontmatter", "function parseFrontmatter() { return {}; }")],
+        root_nodes: ["code:a:n1"],
+      }),
+    ]);
+
+    const results = store.searchDocuments("frontmatter");
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].doc_id).toBe("code:a");
+  });
+
+  test("snake_case subtokens are split", () => {
+    store.load([
+      makeDoc({
+        meta: { doc_id: "code:py", file_path: "config.py", collection: "code" },
+        tree: [codeNode("code:py:n1", "function parse_log_level", "def parse_log_level(s): return MAPPING[s]")],
+        root_nodes: ["code:py:n1"],
+      }),
+    ]);
+
+    // 'level' is a subtoken of parse_log_level — MAPPING avoids confounding tokens
+    const results = store.searchDocuments("level");
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].doc_id).toBe("code:py");
+  });
+
+  test("casing-aware splits: URLParser → URL + Parser", () => {
+    store.load([
+      makeDoc({
+        meta: { doc_id: "code:url", file_path: "url.ts", collection: "code" },
+        tree: [codeNode("code:url:n1", "class URLParser", "class URLParser { parse(input: string) {} }")],
+        root_nodes: ["code:url:n1"],
+      }),
+    ]);
+
+    const parserMatch = store.searchDocuments("parser");
+    expect(parserMatch.length).toBeGreaterThan(0);
+    expect(parserMatch[0].doc_id).toBe("code:url");
+
+    const urlMatch = store.searchDocuments("url");
+    expect(urlMatch.length).toBeGreaterThan(0);
+    expect(urlMatch[0].doc_id).toBe("code:url");
+  });
+
+  test("subtoken match scores below exact match for the same query", () => {
+    // Doc A has the term verbatim; Doc B has it only as a subtoken.
+    // Both match, but exact should outrank subtoken.
+    store.load([
+      makeDoc({
+        meta: { doc_id: "code:exact", file_path: "exact.ts", collection: "code" },
+        tree: [codeNode("code:exact:n1", "function frontmatter", "function frontmatter() { return parse(); }")],
+        root_nodes: ["code:exact:n1"],
+      }),
+      makeDoc({
+        meta: { doc_id: "code:sub", file_path: "sub.ts", collection: "code" },
+        tree: [codeNode("code:sub:n1", "function parseFrontmatter", "function parseFrontmatter() { return {}; }")],
+        root_nodes: ["code:sub:n1"],
+      }),
+    ]);
+
+    const results = store.searchDocuments("frontmatter");
+    expect(results[0].doc_id).toBe("code:exact");
+    expect(results[0].score).toBeGreaterThan(results[1].score);
+  });
+
+  test("full_coverage_bonus does NOT fire for multi-subtoken match in single identifier", () => {
+    // Query "parse frontmatter" — both terms are subtokens of parseFrontmatter.
+    // Without the precision rule, parseFrontmatter would spoof "full coverage".
+    // Compare against a doc with both terms as exact matches.
+    store.load([
+      makeDoc({
+        meta: { doc_id: "code:sub", file_path: "sub.ts", collection: "code" },
+        tree: [codeNode("code:sub:n1", "function parseFrontmatter", "function parseFrontmatter() {}")],
+        root_nodes: ["code:sub:n1"],
+      }),
+      makeDoc({
+        meta: { doc_id: "code:exact", file_path: "exact.ts", collection: "code" },
+        tree: [makeNode({
+          node_id: "code:exact:n1",
+          title: "function helper",
+          content: "function helper() { /* parse the frontmatter */ const x = 1; }",
+          symbol_kind: "function",
+          symbol_name: "helper",
+        })],
+        root_nodes: ["code:exact:n1"],
+      }),
+    ]);
+
+    const results = store.searchDocuments("parse frontmatter");
+    const subResult = results.find((r) => r.doc_id === "code:sub");
+    const exactResult = results.find((r) => r.doc_id === "code:exact");
+    expect(subResult).toBeDefined();
+    expect(exactResult).toBeDefined();
+    // The exact-match doc gets full_coverage_bonus (5.0 default), the subtoken-only doc does not.
+    // After the bonus the exact doc must outscore the subtoken doc.
+    expect(exactResult!.score).toBeGreaterThan(subResult!.score);
+  });
+
+  test("subtoken matches contribute to term_proximity_bonus (recall)", () => {
+    // When a doc has both query terms via subtoken matches, proximity bonus
+    // should still apply (recall is the goal here, unlike full_coverage).
+    store.load([
+      makeDoc({
+        meta: { doc_id: "code:sub", file_path: "sub.ts", collection: "code" },
+        tree: [codeNode("code:sub:n1", "function parseFrontmatter", "function parseFrontmatter() {}")],
+        root_nodes: ["code:sub:n1"],
+      }),
+    ]);
+
+    store.setRanking({ term_proximity_bonus: 0 });
+    const noProx = store.searchDocuments("parse frontmatter")[0].score;
+
+    store.setRanking({ term_proximity_bonus: 5 });
+    const withProx = store.searchDocuments("parse frontmatter")[0].score;
+
+    expect(withProx).toBeGreaterThan(noProx);
+  });
+
+  test("subtoken_weight is configurable and reduces score contribution", () => {
+    store.load([
+      makeDoc({
+        meta: { doc_id: "code:sub", file_path: "sub.ts", collection: "code" },
+        tree: [codeNode("code:sub:n1", "function parseFrontmatter", "function parseFrontmatter() {}")],
+        root_nodes: ["code:sub:n1"],
+      }),
+    ]);
+
+    store.setRanking({ subtoken_weight: 0.1 });
+    const lowWeight = store.searchDocuments("frontmatter")[0].score;
+
+    store.setRanking({ subtoken_weight: 1.0 });
+    const fullWeight = store.searchDocuments("frontmatter")[0].score;
+
+    expect(fullWeight).toBeGreaterThan(lowWeight);
+  });
+
+  test("markdown nodes are NOT subtokenized", () => {
+    // Same identifier in a markdown node — should NOT match a subtoken query
+    // because markdown content is plain prose and shouldn't be identifier-split.
+    store.load([
+      makeDoc({
+        meta: { doc_id: "docs:guide", file_path: "guide.md", collection: "docs" },
+        tree: [makeNode({
+          node_id: "docs:guide:n1",
+          title: "Guide",
+          content: "Use parseFrontmatter for YAML headers.",
+          // no symbol_kind — markdown node
+        })],
+        root_nodes: ["docs:guide:n1"],
+      }),
+    ]);
+
+    // 'frontmatter' is mid-word in parseFrontmatter, only reachable via
+    // subtoken-split. For markdown nodes that's deliberately disabled.
+    const results = store.searchDocuments("frontmatter");
+    expect(results.length).toBe(0);
+  });
+
+  test("subtokens equal to the full token are not double-indexed", () => {
+    // 'parse' (single word) → no subtoken split, only exact indexing.
+    // Verify this by checking that searching for 'parse' doesn't double-count.
+    store.load([
+      makeDoc({
+        meta: { doc_id: "code:simple", file_path: "simple.ts", collection: "code" },
+        tree: [codeNode("code:simple:n1", "function parse", "function parse() {}")],
+        root_nodes: ["code:simple:n1"],
+      }),
+    ]);
+
+    store.setRanking({ subtoken_weight: 0 });
+    const noSubtoken = store.searchDocuments("parse")[0].score;
+
+    store.setRanking({ subtoken_weight: 1.0 });
+    const withSubtoken = store.searchDocuments("parse")[0].score;
+
+    // Single-word identifier should not produce subtoken postings, so
+    // changing subtoken_weight makes no difference.
+    expect(withSubtoken).toBeCloseTo(noSubtoken, 3);
+  });
+});
+
 // ── resolveRef ──────────────────────────────────────────────────────
 
 describe("resolveRef", () => {
