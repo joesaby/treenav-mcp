@@ -690,6 +690,68 @@ export class DocumentStore {
       }
     }
 
+    // ── File-level coherence pass ──────────────────────────────────
+    // After all per-node multipliers are applied, group by doc_id and lift
+    // multi-hit files. Two distinct lifts:
+    //  (1) file boost: every matching node's score is multiplied by
+    //      `1 + cohBonus * min(matchCount - 1, MAX_COUNT_LIFT)`. Bounded so
+    //      docs with many incidental matches don't dominate docs with one
+    //      strong hit. Multiplicative (not additive) so already-strong matches
+    //      gain more in absolute terms — encodes that the file is more
+    //      relevant, but doesn't flatten the within-group ordering.
+    //  (2) lead bonus: the node with smallest line_start (shallowest level
+    //      on tie) gets an additional additive lift `leadBonus * max(group)`.
+    //      Surfaces the file's natural entry point as the leading result.
+    const cohBonus = this.ranking.file_coherence_bonus;
+    const leadBonus = this.ranking.file_lead_bonus;
+    const MAX_COUNT_LIFT = 5;
+    if (cohBonus > 0 || leadBonus > 0) {
+      const groupsByDoc: Map<string, Array<{ key: string; score: number; node_id: string }>> = new Map();
+      for (const [key, entry] of nodeScores) {
+        if (!groupsByDoc.has(entry.doc_id)) groupsByDoc.set(entry.doc_id, []);
+        groupsByDoc.get(entry.doc_id)!.push({ key, score: entry.score, node_id: entry.node_id });
+      }
+
+      for (const [doc_id, group] of groupsByDoc) {
+        if (group.length < 2) continue; // single-hit files unaffected
+        const doc = this.docs.get(doc_id);
+        if (!doc) continue;
+
+        const matchCount = group.length;
+        const max = group.reduce((m, g) => (g.score > m ? g.score : m), 0);
+
+        // (1) file boost — multiplicative, bounded
+        if (cohBonus > 0) {
+          const lift = 1 + cohBonus * Math.min(matchCount - 1, MAX_COUNT_LIFT);
+          for (const g of group) {
+            nodeScores.get(g.key)!.score *= lift;
+          }
+        }
+
+        // (2) lead bonus: smallest line_start, tie-break by shallowest level.
+        // Computed against pre-coherence-lift max so lead and file boost don't
+        // double-amplify each other in unstable ways.
+        if (leadBonus > 0) {
+          let leadKey = group[0].key;
+          let leadStart = Infinity;
+          let leadLevel = Infinity;
+          for (const g of group) {
+            const node = doc.tree.find((n) => n.node_id === g.node_id);
+            if (!node) continue;
+            if (
+              node.line_start < leadStart ||
+              (node.line_start === leadStart && node.level < leadLevel)
+            ) {
+              leadStart = node.line_start;
+              leadLevel = node.level;
+              leadKey = g.key;
+            }
+          }
+          nodeScores.get(leadKey)!.score += leadBonus * max;
+        }
+      }
+    }
+
     // Sort by score and only convert top N to full SearchResult objects
     const limit = options?.limit || 20;
     const scored = Array.from(nodeScores.values());
@@ -697,6 +759,7 @@ export class DocumentStore {
     const topN = scored.slice(0, limit);
     nodeScores.clear();
 
+    // Convert to SearchResult objects
     const results: SearchResult[] = [];
 
     for (const entry of topN) {
