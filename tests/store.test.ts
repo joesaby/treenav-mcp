@@ -1068,6 +1068,176 @@ describe("noise penalty", () => {
   });
 });
 
+// ── File coherence ──────────────────────────────────────────────────
+
+describe("file coherence", () => {
+  let store: DocumentStore;
+
+  beforeEach(() => {
+    store = new DocumentStore();
+  });
+
+  function multiNodeDoc(doc_id: string, file_path: string, nodes: { node_id: string; title: string; content: string; line_start?: number; level?: number; symbol_name?: string; symbol_kind?: string; }[]): IndexedDocument {
+    return makeDoc({
+      meta: { doc_id, file_path, collection: "code", title: file_path },
+      tree: nodes.map((n, i) => makeNode({
+        node_id: n.node_id,
+        title: n.title,
+        content: n.content,
+        level: n.level ?? 1,
+        line_start: n.line_start ?? (i * 10 + 1),
+        line_end: (n.line_start ?? (i * 10 + 1)) + 5,
+        symbol_name: n.symbol_name,
+        symbol_kind: n.symbol_kind,
+      })),
+      root_nodes: [nodes[0].node_id],
+    });
+  }
+
+  test("multi-hit file: every matching node in the group gets a coherence bonus", () => {
+    // Two docs, each indexed identically. Doc A has 2 matching nodes; Doc B has 1.
+    // With multiplicative coherence: Doc A's nodes get the same factor lift.
+    store.load([
+      multiNodeDoc("code:a", "a.ts", [
+        { node_id: "code:a:n1", title: "function authenticate", content: "function authenticate() {}", symbol_name: "authenticate", symbol_kind: "function" },
+        { node_id: "code:a:n2", title: "method validate", content: "method validate() { authenticate(); }", line_start: 20 },
+      ]),
+      multiNodeDoc("code:b", "b.ts", [
+        { node_id: "code:b:n1", title: "imports", content: "import { authenticate } from './a';" },
+      ]),
+    ]);
+
+    store.setRanking({ file_coherence_bonus: 0, file_lead_bonus: 0 });
+    const baseline = store.searchDocuments("authenticate");
+    const baseA1 = baseline.find((r) => r.node_id === "code:a:n1")!.score;
+    const baseA2 = baseline.find((r) => r.node_id === "code:a:n2")!.score;
+
+    store.setRanking({ file_coherence_bonus: 0.5, file_lead_bonus: 0 });
+    const boosted = store.searchDocuments("authenticate");
+    const boostA1 = boosted.find((r) => r.node_id === "code:a:n1")!.score;
+    const boostA2 = boosted.find((r) => r.node_id === "code:a:n2")!.score;
+
+    // matchCount=2 → multiplier = 1 + 0.5*1 = 1.5
+    expect(boostA1 / baseA1).toBeCloseTo(1.5, 3);
+    expect(boostA2 / baseA2).toBeCloseTo(1.5, 3);
+  });
+
+  test("file coherence is bounded — high match count caps at MAX_COUNT_LIFT=5", () => {
+    // 10 nodes all matching a common term — multiplier should saturate at
+    // 1 + cohBonus * 5 (not 1 + cohBonus * 9).
+    const nodes = [];
+    for (let i = 1; i <= 10; i++) {
+      nodes.push({
+        node_id: `code:big:n${i}`,
+        title: `function fn${i}`,
+        content: `function fn${i}() { return authenticate(); }`,
+        line_start: i * 10,
+      });
+    }
+    store.load([multiNodeDoc("code:big", "big.ts", nodes)]);
+
+    store.setRanking({ file_coherence_bonus: 0, file_lead_bonus: 0 });
+    const baseline = store.searchDocuments("authenticate")[0].score;
+
+    store.setRanking({ file_coherence_bonus: 0.1, file_lead_bonus: 0 });
+    const boosted = store.searchDocuments("authenticate")[0].score;
+
+    // matchCount=10 → min(9, 5) = 5 → multiplier = 1 + 0.1*5 = 1.5
+    expect(boosted / baseline).toBeCloseTo(1.5, 2);
+  });
+
+  test("single-hit file: no coherence bonus applied", () => {
+    store.load([
+      multiNodeDoc("code:lonely", "lonely.ts", [
+        { node_id: "code:lonely:n1", title: "function authenticate", content: "function authenticate() {}", symbol_name: "authenticate", symbol_kind: "function" },
+        { node_id: "code:lonely:n2", title: "function unrelated", content: "function unrelated() { return 0; }" },
+      ]),
+    ]);
+
+    store.setRanking({ file_coherence_bonus: 0, file_lead_bonus: 0 });
+    const baseline = store.searchDocuments("authenticate")[0].score;
+
+    store.setRanking({ file_coherence_bonus: 0.5, file_lead_bonus: 0 });
+    const after = store.searchDocuments("authenticate")[0].score;
+
+    expect(after).toBeCloseTo(baseline, 3);
+  });
+
+  test("lead bonus: node with smallest line_start wins among matching nodes in a group", () => {
+    store.load([
+      multiNodeDoc("code:multi", "multi.ts", [
+        { node_id: "code:multi:n1", title: "function authenticate", content: "function authenticate() {}", line_start: 10, symbol_name: "authenticate", symbol_kind: "function" },
+        { node_id: "code:multi:n2", title: "method validate", content: "method validate() { authenticate(); }", line_start: 50 },
+        { node_id: "code:multi:n3", title: "method retry", content: "method retry() { authenticate(); }", line_start: 100 },
+      ]),
+    ]);
+
+    store.setRanking({ file_coherence_bonus: 0, file_lead_bonus: 0 });
+    const baseline = store.searchDocuments("authenticate");
+    const baseN1 = baseline.find((r) => r.node_id === "code:multi:n1")!.score;
+    const baseN2 = baseline.find((r) => r.node_id === "code:multi:n2")!.score;
+    const baseN3 = baseline.find((r) => r.node_id === "code:multi:n3")!.score;
+
+    store.setRanking({ file_coherence_bonus: 0, file_lead_bonus: 0.5 });
+    const boosted = store.searchDocuments("authenticate");
+    const boostN1 = boosted.find((r) => r.node_id === "code:multi:n1")!.score;
+    const boostN2 = boosted.find((r) => r.node_id === "code:multi:n2")!.score;
+    const boostN3 = boosted.find((r) => r.node_id === "code:multi:n3")!.score;
+
+    // Only the lead node (smallest line_start) gets the bonus
+    expect(boostN1 - baseN1).toBeGreaterThan(0);
+    expect(boostN2 - baseN2).toBeCloseTo(0, 3);
+    expect(boostN3 - baseN3).toBeCloseTo(0, 3);
+  });
+
+  test("lead bonus tie-break: shallowest level wins when line_start is equal", () => {
+    store.load([
+      multiNodeDoc("code:tied", "tied.ts", [
+        { node_id: "code:tied:n1", title: "method authenticate", content: "method authenticate() {}", line_start: 10, level: 3, symbol_name: "authenticate", symbol_kind: "method" },
+        { node_id: "code:tied:n2", title: "class Auth", content: "class Auth { authenticate() {} }", line_start: 10, level: 1 }, // shallower
+      ]),
+    ]);
+
+    store.setRanking({ file_coherence_bonus: 0, file_lead_bonus: 0 });
+    const baseline = store.searchDocuments("authenticate");
+    const baseN1 = baseline.find((r) => r.node_id === "code:tied:n1")!.score;
+    const baseN2 = baseline.find((r) => r.node_id === "code:tied:n2")!.score;
+
+    store.setRanking({ file_coherence_bonus: 0, file_lead_bonus: 0.5 });
+    const boosted = store.searchDocuments("authenticate");
+    const boostN1 = boosted.find((r) => r.node_id === "code:tied:n1")!.score;
+    const boostN2 = boosted.find((r) => r.node_id === "code:tied:n2")!.score;
+
+    // n2 (level 1, shallower) wins the tie
+    expect(boostN2 - baseN2).toBeGreaterThan(0);
+    expect(boostN1 - baseN1).toBeCloseTo(0, 3);
+  });
+
+  test("file coherence is independent of doc collection (works for markdown too)", () => {
+    // The plan keeps this generic — markdown docs with multiple matching headings
+    // should also get the file boost. (No noise-style code/markdown distinction.)
+    store.load([
+      multiNodeDoc("docs:guide", "guide.md", [
+        { node_id: "docs:guide:n1", title: "Authenticate Users", content: "How to authenticate users." },
+        { node_id: "docs:guide:n2", title: "Authenticate Services", content: "How to authenticate services." },
+      ]),
+    ]);
+    // Override collection to "docs" — multiNodeDoc defaults to "code"
+    const docsDocs = store.listDocuments();
+    expect(docsDocs.documents.length).toBe(1);
+
+    store.setRanking({ file_coherence_bonus: 0, file_lead_bonus: 0 });
+    const baseline = store.searchDocuments("authenticate");
+    const baseN1 = baseline.find((r) => r.node_id === "docs:guide:n1")!.score;
+
+    store.setRanking({ file_coherence_bonus: 0.5, file_lead_bonus: 0 });
+    const boosted = store.searchDocuments("authenticate");
+    const boostN1 = boosted.find((r) => r.node_id === "docs:guide:n1")!.score;
+
+    expect(boostN1).toBeGreaterThan(baseN1);
+  });
+});
+
 // ── resolveRef ──────────────────────────────────────────────────────
 
 describe("resolveRef", () => {
