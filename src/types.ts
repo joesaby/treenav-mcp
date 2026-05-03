@@ -267,6 +267,17 @@ export interface RankingParams {
    *  smallest `line_start` (tie-broken by shallowest `level`). Default 0.05.
    *  Set to 0 to disable. */
   file_lead_bonus: number;
+
+  /** Score multiplier applied to subtoken posting hits. At index time, code
+   *  nodes (`symbol_kind` set) emit subtoken postings for camelCase /
+   *  snake_case / kebab-case identifier splits — so a query for `frontmatter`
+   *  matches `parseFrontmatter`. Subtoken hits contribute
+   *  `bm25_score * subtoken_weight` to the node score, and count toward
+   *  `term_proximity_bonus` but NOT `full_coverage_bonus` (precision guard
+   *  so multi-subtoken queries can't spoof full coverage from a single
+   *  identifier). Markdown nodes are never subtokenized. Default 0.5.
+   *  Set to 0 to disable subtoken contributions. */
+  subtoken_weight: number;
 }
 
 export const DEFAULT_RANKING: RankingParams = {
@@ -281,6 +292,7 @@ export const DEFAULT_RANKING: RankingParams = {
   definition_boost: 2.0,
   file_coherence_bonus: 0.05,
   file_lead_bonus: 0.05,
+  subtoken_weight: 0.5,
 };
 
 // ── Collection configuration (Pagefind multisite inspired) ──────────
