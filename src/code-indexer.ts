@@ -79,6 +79,23 @@ export const CODE_EXTENSIONS = new Set([
 /** Default glob pattern for code files */
 export const CODE_GLOB = "**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs,py,pyi,go,rs,java,kt,scala,c,cpp,cc,h,hpp,cs,rb,swift,php,lua,sh,bash,zsh}";
 
+/** Directory names always excluded from code indexing.
+ *  Index-time hard exclusion — these are build outputs, vendored deps,
+ *  or VCS state that should never appear in search results. Distinct
+ *  from `noise_patterns`, which down-ranks at score time. */
+export const EXCLUDED_DIRS = new Set([
+  "node_modules",
+  "vendor",
+  "dist",
+  "build",
+  ".git",
+]);
+
+function isInExcludedDir(relPath: string): boolean {
+  const segments = relPath.split(/[/\\]/);
+  return segments.some((s) => EXCLUDED_DIRS.has(s));
+}
+
 /**
  * Check if a file extension is supported for code indexing.
  */
@@ -302,9 +319,11 @@ export async function indexCodeCollection(
 
   for await (const entry of glob.scan({ cwd: root, absolute: true })) {
     // Only include files the code indexer can handle
-    if (isCodeFile(entry)) {
-      files.push(entry);
-    }
+    if (!isCodeFile(entry)) continue;
+    // Hard-exclude build outputs, vendored deps, and VCS state. This is
+    // index-time enforcement; user-supplied globs cannot opt out.
+    if (isInExcludedDir(relative(root, entry))) continue;
+    files.push(entry);
   }
 
   if (files.length === 0) return [];

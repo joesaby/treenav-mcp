@@ -703,6 +703,75 @@ describe("indexCodeFile", () => {
   });
 });
 
+// ── indexCodeCollection: directory exclusions ──────────────────────
+
+describe("indexCodeCollection excludes build/vendor directories", () => {
+  let tempDir: string;
+
+  async function setupTempDir() {
+    tempDir = await mkdtemp(join(tmpdir(), "treenav-exclude-test-"));
+    return tempDir;
+  }
+
+  async function cleanupTempDir() {
+    if (tempDir) {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  }
+
+  test("skips node_modules, vendor, dist, build, .git by default", async () => {
+    const dir = await setupTempDir();
+    try {
+      // Real source file
+      await mkdir(join(dir, "src"), { recursive: true });
+      await writeFile(join(dir, "src/auth.ts"), TS_CLASS_WITH_METHODS);
+
+      // Excluded directories
+      for (const excluded of ["node_modules", "vendor", "dist", "build", ".git"]) {
+        await mkdir(join(dir, excluded), { recursive: true });
+        await writeFile(join(dir, excluded, "polluter.ts"), TS_CLASS_WITH_METHODS);
+      }
+
+      const { indexCodeCollection } = await import("../src/code-indexer");
+      const docs = await indexCodeCollection({ root: dir, name: "code", weight: 1.0 });
+
+      const paths = docs.map((d) => d.meta.file_path);
+      expect(paths).toContain("src/auth.ts");
+      expect(paths).not.toContain("node_modules/polluter.ts");
+      expect(paths).not.toContain("vendor/polluter.ts");
+      expect(paths).not.toContain("dist/polluter.ts");
+      expect(paths).not.toContain("build/polluter.ts");
+      expect(paths).not.toContain(".git/polluter.ts");
+    } finally {
+      await cleanupTempDir();
+    }
+  });
+
+  test("user-supplied glob_pattern still respects exclusions", async () => {
+    const dir = await setupTempDir();
+    try {
+      await mkdir(join(dir, "src"), { recursive: true });
+      await writeFile(join(dir, "src/a.ts"), TS_CLASS_WITH_METHODS);
+      await mkdir(join(dir, "node_modules/foo"), { recursive: true });
+      await writeFile(join(dir, "node_modules/foo/b.ts"), TS_CLASS_WITH_METHODS);
+
+      const { indexCodeCollection } = await import("../src/code-indexer");
+      const docs = await indexCodeCollection({
+        root: dir,
+        name: "code",
+        weight: 1.0,
+        glob_pattern: "**/*.ts",
+      });
+
+      const paths = docs.map((d) => d.meta.file_path);
+      expect(paths).toContain("src/a.ts");
+      expect(paths).not.toContain("node_modules/foo/b.ts");
+    } finally {
+      await cleanupTempDir();
+    }
+  });
+});
+
 // ── Integration: code in DocumentStore ──────────────────────────────
 
 describe("code indexer + DocumentStore integration", () => {

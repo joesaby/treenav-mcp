@@ -55,10 +55,11 @@ if (docsGlob) {
 
 // Code collection: set CODE_ROOT to enable AST-based code indexing
 const code_root = process.env.CODE_ROOT;
+const code_collection_name = process.env.CODE_COLLECTION || "code";
 if (code_root) {
   config.code_collections = [
     {
-      name: process.env.CODE_COLLECTION || "code",
+      name: code_collection_name,
       root: code_root,
       weight: parseFloat(process.env.CODE_WEIGHT || "1.0"),
       glob_pattern: process.env.CODE_GLOB,
@@ -126,6 +127,15 @@ async function main() {
     const startTime = Date.now();
     const documents = await indexAllCollections(config);
     store.load(documents);
+
+    // Apply default score-time noise penalties for the code collection so
+    // tests, .d.ts stubs, and legacy/compat shims rank below canonical impls.
+    if (code_root) {
+      const { DEFAULT_CODE_NOISE_PATTERNS } = await import("./types");
+      store.setNoisePatterns({
+        [code_collection_name]: DEFAULT_CODE_NOISE_PATTERNS,
+      });
+    }
 
     const glossaryPath = process.env.GLOSSARY_PATH || join(docs_root, "glossary.json");
     if (existsSync(glossaryPath)) {
