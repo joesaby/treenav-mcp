@@ -590,19 +590,33 @@ export class DocumentStore {
 
     // Detect shape on the RAW query (preserves casing) so camelCase /
     // snake_case / acronym signals survive the lowercasing in tokenize().
-    // Used to bump definition_boost and dampen subtoken_weight for this
-    // single search call — Semble-style adaptive lexical weighting,
-    // adapted for treenav's single-signal pipeline (will become a per-
-    // retriever weighting once Tier 3 RRF lands).
+    // Used to scale per-signal RRF weights and definition_boost for this
+    // single search call — Semble-style adaptive lexical weighting now
+    // expressed at the signal level, on top of RRF fusion (Tier 3).
     const symbolShaped = isSymbolShapedQuery(query);
     const effectiveDefinitionBoost = symbolShaped
       ? this.ranking.definition_boost *
         this.ranking.symbol_query_definition_boost_multiplier
       : this.ranking.definition_boost;
-    const effectiveSubtokenWeight = symbolShaped
-      ? this.ranking.subtoken_weight *
-        this.ranking.symbol_query_subtoken_dampener
-      : this.ranking.subtoken_weight;
+
+    // Resolve per-signal RRF weights. `signal_weights` overrides the legacy
+    // knobs; missing keys fall back to legacy params for backward compat.
+    // Adaptive weighting layers a multiplicative factor on top of the
+    // resolved values when the query is symbol-shaped.
+    const sw = this.ranking.signal_weights;
+    const baseExactWeight = sw.bm25_exact ?? 1.0;
+    const basePrefixWeight = sw.bm25_prefix ?? this.ranking.prefix_penalty;
+    const baseSubtokenWeight = sw.subtoken ?? this.ranking.subtoken_weight;
+    const effective = {
+      bm25_exact: symbolShaped
+        ? baseExactWeight * this.ranking.symbol_query_exact_boost
+        : baseExactWeight,
+      bm25_prefix: basePrefixWeight,
+      subtoken: symbolShaped
+        ? baseSubtokenWeight * this.ranking.symbol_query_subtoken_dampener
+        : baseSubtokenWeight,
+    };
+    const rrfK = this.ranking.rrf_k;
 
     // Expand query using glossary (abbreviation ↔ expanded forms)
     const expandedTerms = this.expandQueryTerms(queryTerms);
@@ -628,69 +642,87 @@ export class DocumentStore {
       }
     }
 
-    // Accumulate BM25 scores per node.
+    // ── Tier 3: Reciprocal Rank Fusion (RRF) ───────────────────────
     //
-    // matchedTerms = union of exact + prefix + subtoken matches
-    //   (used by term_proximity_bonus — recall-oriented, every kind counts).
-    // exactTerms   = exact + prefix matches only
-    //   (used by full_coverage_bonus — precision-oriented, subtokens excluded
-    //    so multi-subtoken queries can't spoof full coverage from a single
-    //    identifier like parseFrontmatter).
+    // Phase 1: per-signal accumulation. For each retrieval signal
+    //   {bm25_exact, bm25_prefix, subtoken}, sum BM25 contributions per
+    //   node across query terms. NO per-signal multiplier yet — the
+    //   per-signal scores are only used to RANK nodes within the signal.
+    //
+    // Phase 2: rank fusion. Sort each signal's nodes by score desc, assign
+    //   rank 1..N, accumulate `effective[signal] / (rrf_k + rank)` into
+    //   `nodeScores`. RRF is rank-driven and bounded — each signal
+    //   contributes at most `effective[signal] / (rrf_k + 1)` to a node.
+    //
+    // Phase 3: matched-term/exact-term bookkeeping. matchedTerms is the
+    //   union of all three signals' term-sets (recall-oriented, drives
+    //   term_proximity_bonus). exactTerms is the union of exact + prefix
+    //   only (precision-oriented, drives full_coverage_bonus — subtokens
+    //   excluded so a multi-subtoken match in a single identifier like
+    //   parseFrontmatter can't spoof full coverage).
+    //
+    // Position tracking happens during Phase 1, only from bm25_exact and
+    // bm25_prefix postings (subtoken postings have empty positions). The
+    // existing MAX_POSITIONS_PER_NODE = 30 cap continues to apply.
     const MAX_POSITIONS_PER_NODE = 30;
     const MAX_PREFIX_TERMS = 50;
-    const nodeScores: Map<
-      string,
-      {
-        score: number;
-        matchedTerms: Set<string>;
-        exactTerms: Set<string>;
-        positions: number[];
-        doc_id: string;
-        node_id: string;
+
+    type SignalEntry = {
+      score: number;
+      terms: Set<string>;
+      positions: number[];
+      doc_id: string;
+      node_id: string;
+    };
+    const exactSignal = new Map<string, SignalEntry>();
+    const prefixSignal = new Map<string, SignalEntry>();
+    const subtokenSignal = new Map<string, SignalEntry>();
+
+    const ensure = (
+      m: Map<string, SignalEntry>,
+      key: string,
+      doc_id: string,
+      node_id: string
+    ): SignalEntry => {
+      let e = m.get(key);
+      if (!e) {
+        e = { score: 0, terms: new Set(), positions: [], doc_id, node_id };
+        m.set(key, e);
       }
-    > = new Map();
+      return e;
+    };
+
+    const appendPositions = (target: number[], src: number[]): void => {
+      if (target.length >= MAX_POSITIONS_PER_NODE) return;
+      const remaining = MAX_POSITIONS_PER_NODE - target.length;
+      const slice = src.length <= remaining ? src : src.slice(0, remaining);
+      for (let i = 0; i < slice.length; i++) target.push(slice[i]);
+    };
 
     for (const term of uniqueTerms) {
-      // Exact term lookup
-      const postings = this.index.get(term);
-      if (postings) {
-        for (const posting of postings) {
-          if (options?.doc_id && posting.doc_id !== options.doc_id) continue;
-          if (filterWhitelist && !filterWhitelist.has(posting.doc_id)) continue;
+      // Signal 1: exact term lookup
+      if (effective.bm25_exact > 0) {
+        const postings = this.index.get(term);
+        if (postings) {
+          for (const posting of postings) {
+            if (options?.doc_id && posting.doc_id !== options.doc_id) continue;
+            if (filterWhitelist && !filterWhitelist.has(posting.doc_id)) continue;
 
-          const nodeKey = `${posting.doc_id}::${posting.node_id}`;
-          const stats = this.nodeStats.get(nodeKey);
-          if (!stats) continue;
+            const nodeKey = `${posting.doc_id}::${posting.node_id}`;
+            const stats = this.nodeStats.get(nodeKey);
+            if (!stats) continue;
 
-          const bm25Score = this.computeBM25(term, posting, stats.total_tokens);
-
-          if (!nodeScores.has(nodeKey)) {
-            nodeScores.set(nodeKey, {
-              score: 0,
-              matchedTerms: new Set(),
-              exactTerms: new Set(),
-              positions: [],
-              doc_id: posting.doc_id,
-              node_id: posting.node_id,
-            });
-          }
-
-          const entry = nodeScores.get(nodeKey)!;
-          entry.score += bm25Score;
-          entry.matchedTerms.add(term);
-          entry.exactTerms.add(term);
-          if (entry.positions.length < MAX_POSITIONS_PER_NODE) {
-            const remaining = MAX_POSITIONS_PER_NODE - entry.positions.length;
-            const slice = posting.positions.length <= remaining
-              ? posting.positions
-              : posting.positions.slice(0, remaining);
-            for (let i = 0; i < slice.length; i++) entry.positions.push(slice[i]);
+            const bm25Score = this.computeBM25(term, posting, stats.total_tokens);
+            const entry = ensure(exactSignal, nodeKey, posting.doc_id, posting.node_id);
+            entry.score += bm25Score;
+            entry.terms.add(term);
+            appendPositions(entry.positions, posting.positions);
           }
         }
       }
 
-      // Prefix matching via sorted term array (O(log n) lookup)
-      if (term.length >= 3) {
+      // Signal 2: prefix matching via sorted term array (O(log n) lookup)
+      if (effective.bm25_prefix > 0 && term.length >= 3) {
         let prefixCount = 0;
         const start = this.prefixLowerBound(term);
         for (let ti = start; ti < this.sortedTerms.length; ti++) {
@@ -709,44 +741,24 @@ export class DocumentStore {
             const stats = this.nodeStats.get(nodeKey);
             if (!stats) continue;
 
-            // Prefix matches score at prefix_penalty of exact matches
-            const bm25Score =
-              this.computeBM25(indexedTerm, posting, stats.total_tokens) *
-              this.ranking.prefix_penalty;
-
-            if (!nodeScores.has(nodeKey)) {
-              nodeScores.set(nodeKey, {
-                score: 0,
-                matchedTerms: new Set(),
-                exactTerms: new Set(),
-                positions: [],
-                doc_id: posting.doc_id,
-                node_id: posting.node_id,
-              });
-            }
-
-            const entry = nodeScores.get(nodeKey)!;
+            // Prefix postings contribute their raw BM25 score to the prefix
+            // signal — the prefix-vs-exact tradeoff lives in the per-signal
+            // RRF weight (`effective.bm25_prefix`), not in a per-posting
+            // discount as it did pre-RRF.
+            const bm25Score = this.computeBM25(indexedTerm, posting, stats.total_tokens);
+            const entry = ensure(prefixSignal, nodeKey, posting.doc_id, posting.node_id);
             entry.score += bm25Score;
-            entry.matchedTerms.add(term);
-            // Prefix is a stem-equivalent of the exact term — count toward
-            // exactTerms for full_coverage_bonus purposes.
-            entry.exactTerms.add(term);
-            if (entry.positions.length < MAX_POSITIONS_PER_NODE) {
-              const remaining = MAX_POSITIONS_PER_NODE - entry.positions.length;
-              const slice = posting.positions.length <= remaining
-                ? posting.positions
-                : posting.positions.slice(0, remaining);
-              for (let i = 0; i < slice.length; i++) entry.positions.push(slice[i]);
-            }
+            entry.terms.add(term); // record the user-typed query term, not the matched index term
+            appendPositions(entry.positions, posting.positions);
           }
         }
       }
 
-      // Subtoken matching — code nodes only, populated at index time.
-      // Subtoken contributions are weighted by subtoken_weight and DO NOT
-      // count toward exactTerms (so full_coverage_bonus can't be spoofed
-      // by a single multi-part identifier).
-      if (effectiveSubtokenWeight > 0) {
+      // Signal 3: subtoken matching — code nodes only, populated at index time.
+      // Subtoken contributions DO NOT count toward exactTerms (so
+      // full_coverage_bonus can't be spoofed by a single multi-part
+      // identifier). Subtoken postings have empty positions by construction.
+      if (effective.subtoken > 0) {
         const subPostings = this.subtokenIndex.get(term);
         if (subPostings) {
           for (const posting of subPostings) {
@@ -757,29 +769,101 @@ export class DocumentStore {
             const stats = this.nodeStats.get(nodeKey);
             if (!stats) continue;
 
-            const bm25Score =
-              this.computeBM25Subtoken(term, posting, stats.total_tokens) *
-              effectiveSubtokenWeight;
-
-            if (!nodeScores.has(nodeKey)) {
-              nodeScores.set(nodeKey, {
-                score: 0,
-                matchedTerms: new Set(),
-                exactTerms: new Set(),
-                positions: [],
-                doc_id: posting.doc_id,
-                node_id: posting.node_id,
-              });
-            }
-
-            const entry = nodeScores.get(nodeKey)!;
+            const bm25Score = this.computeBM25Subtoken(term, posting, stats.total_tokens);
+            const entry = ensure(subtokenSignal, nodeKey, posting.doc_id, posting.node_id);
             entry.score += bm25Score;
-            entry.matchedTerms.add(term);
-            // Deliberately NOT added to entry.exactTerms.
+            entry.terms.add(term);
           }
         }
       }
     }
+
+    // Phase 2 + 3: RRF fusion. Each signal's nodes are sorted by their
+    // signal-internal score, assigned a rank, and contribute
+    // `effective[signal] / (rrf_k + rank)` to the unified `nodeScores`.
+    const nodeScores: Map<
+      string,
+      {
+        score: number;
+        matchedTerms: Set<string>;
+        exactTerms: Set<string>;
+        positions: number[];
+        doc_id: string;
+        node_id: string;
+      }
+    > = new Map();
+
+    const ensureFused = (
+      key: string,
+      doc_id: string,
+      node_id: string
+    ): {
+      score: number;
+      matchedTerms: Set<string>;
+      exactTerms: Set<string>;
+      positions: number[];
+      doc_id: string;
+      node_id: string;
+    } => {
+      let e = nodeScores.get(key);
+      if (!e) {
+        e = {
+          score: 0,
+          matchedTerms: new Set(),
+          exactTerms: new Set(),
+          positions: [],
+          doc_id,
+          node_id,
+        };
+        nodeScores.set(key, e);
+      }
+      return e;
+    };
+
+    const fuseSignal = (
+      signal: Map<string, SignalEntry>,
+      weight: number,
+      contributesToExact: boolean,
+      carriesPositions: boolean
+    ): void => {
+      if (weight <= 0 || signal.size === 0) return;
+      const entries = Array.from(signal.entries());
+      // Sort by signal-internal score desc; stable on key for determinism.
+      entries.sort((a, b) => {
+        if (b[1].score !== a[1].score) return b[1].score - a[1].score;
+        return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0;
+      });
+      // Tied scores share a rank ("competition ranking", a.k.a. "1224"
+      // ranking) so two nodes with identical signal-internal scores
+      // produce identical RRF contributions. Without this, content-equal
+      // docs land at consecutive ranks (1, 2) and end up with measurably
+      // different fused scores — a behavior that breaks the
+      // "identical input → identical output" property the additive
+      // scorer used to provide.
+      let prevScore = Number.POSITIVE_INFINITY;
+      let currentRank = 0;
+      for (let i = 0; i < entries.length; i++) {
+        const [key, sigEntry] = entries[i];
+        if (sigEntry.score !== prevScore) {
+          currentRank = i + 1;
+          prevScore = sigEntry.score;
+        }
+        const contribution = weight / (rrfK + currentRank);
+        const fused = ensureFused(key, sigEntry.doc_id, sigEntry.node_id);
+        fused.score += contribution;
+        for (const t of sigEntry.terms) {
+          fused.matchedTerms.add(t);
+          if (contributesToExact) fused.exactTerms.add(t);
+        }
+        if (carriesPositions && sigEntry.positions.length > 0) {
+          appendPositions(fused.positions, sigEntry.positions);
+        }
+      }
+    };
+
+    fuseSignal(exactSignal, effective.bm25_exact, true, true);
+    fuseSignal(prefixSignal, effective.bm25_prefix, true, true);
+    fuseSignal(subtokenSignal, effective.subtoken, false, false);
 
     // Apply co-occurrence bonuses
     for (const [nodeKey, entry] of nodeScores) {

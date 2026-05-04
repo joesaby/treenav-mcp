@@ -540,8 +540,10 @@ function registerCurationTools(
         .number()
         .min(0)
         .max(10)
-        .default(0.1)
-        .describe("Minimum BM25 score for a match to be reported"),
+        .default(0.001)
+        .describe(
+          "Minimum search score for a match to be reported. Default 0.001 — calibrated for the RRF-fused score scale (~[0, 0.05]); set higher to be more selective."
+        ),
       collection: z
         .string()
         .optional()
