@@ -51,13 +51,24 @@ Captured up-front so each task can reference exact paths without re-discovery.
 | `src/server-http.ts` | server-name string |
 | `src/tools.ts` | possibly in tool descriptions |
 | `src/types.ts` | possibly in comments |
+| `src/indexer.ts` | possibly in comments (now also handles CSV/JSONL) |
 | `src/code-indexer.ts` | possibly in comments |
+| `src/curator.ts` | possibly in comments |
+| `src/prompts.ts` | possibly in MCP prompt descriptions |
+| `src/cli-init.ts` | `bunx treenav-mcp init` self-ref strings |
+| `src/cli-lint.ts` | `bunx treenav-mcp lint` self-ref strings |
+| `src/cli-index.ts` | possibly in help text |
 | `src/parsers/typescript.ts` | possibly in comments |
 | `src/parsers/python.ts` | possibly in comments |
+| `src/parsers/go.ts` | possibly in comments |
+| `src/parsers/rust.ts` | possibly in comments |
+| `src/parsers/generic.ts` | possibly in comments |
 | `tests/search-quality.test.ts` | fixture refs |
 | `tests/fixtures/helpers.ts` | fixture refs |
 | `tests/fixtures/sample-docs.ts` | fixture refs |
 | `scripts/benchmark.ts` | run-command refs |
+
+Note: any new `src/cli-*.ts` or `src/parsers/*.ts` file added between plan-write time and execution time should also be included. The implementer should run a final repo-wide grep (Task 1.5 step 1) as the source of truth, not this list.
 
 ### Active docs (Phases 2–5)
 
@@ -120,15 +131,22 @@ Expected: `npm error 404 Not Found - GET https://registry.npmjs.org/treenav - No
 
 If anything other than 404, **stop**. The implementer must surface this to the maintainer and revisit the name choice (fallback options: `treenav-search`, `treenav-engine`, or a fresh name from the prior brainstorm — see notes in PR #11 history).
 
-- [ ] **Step 2: Confirm no in-flight PRs depend on `treenav-mcp` package name**
+- [ ] **Step 2: Confirm no in-flight PRs would conflict with a sweep of `src/`**
 
 Run:
 ```bash
-gh pr list --repo joesaby/treenav-mcp --state open --json number,title
+gh pr list --state open --json number,title,headRefName
 ```
-Cross-check: PRs #14–#19 are the in-flight Semble-port chain. Confirm the maintainer has merged or paused them before starting Phase 1, since the rename will create merge conflicts on every one.
 
-If PRs are still open: **stop and coordinate with the maintainer**. Either merge them first, or rebase them after Phase 1 lands. Do not attempt the rename in parallel.
+Any open PR that touches files in the Phase 1 inventory (especially `src/`, `tests/`, `package.json`, `README.md`) will get conflicts from the rename sweep. Cross-check each open PR's diff:
+
+```bash
+gh pr view <PR#> --json files | head -40
+```
+
+If conflicts are unavoidable: **stop and coordinate with the maintainer**. Either merge the open PRs first, or rebase them after Phase 1 lands. Do not attempt the rename in parallel — the Phase 1 sed sweep over `src/` will hit every file and force-rebase pain on every open PR's diff.
+
+The Semble-port chain (PRs #14 onward at plan-write time) was the largest known concurrent work; check `git log origin/main` to see how much has merged since.
 
 - [ ] **Step 3: Reserve the npm name**
 
@@ -260,18 +278,19 @@ If any file is listed, open it and decide whether the remaining ref is intention
 
 - [ ] **Step 1: Replace `treenav-mcp` → `treenav` in code and tests**
 
-Run from repo root:
+Run from repo root. This loops over every `.ts` file under `src/`, `tests/`, and `scripts/`, so files added since this plan was written are still covered:
+
 ```bash
-for f in src/server.ts src/server-http.ts src/tools.ts src/types.ts src/code-indexer.ts \
-         src/parsers/typescript.ts src/parsers/python.ts \
-         tests/search-quality.test.ts tests/fixtures/helpers.ts tests/fixtures/sample-docs.ts \
-         scripts/benchmark.ts; do
-  if [ -f "$f" ]; then
+find src tests scripts -name "*.ts" -type f | while read -r f; do
+  if grep -q "treenav-mcp" "$f"; then
     sed -i.bak 's/treenav-mcp/treenav/g' "$f"
     rm "$f.bak"
+    echo "updated: $f"
   fi
 done
 ```
+
+Note: this catches CLI self-refs like `bunx treenav-mcp init` and `bunx treenav-mcp lint` inside `src/cli-init.ts` and `src/cli-lint.ts`. After the rename, those strings will read `bunx treenav init` and `bunx treenav lint`, matching the new `bin` entry from Task 1.2.
 
 - [ ] **Step 2: Run the full test suite**
 
@@ -411,7 +430,7 @@ Apply this exact edit:
 
 ```diff
 -  "description": "Agentic document retrieval over markdown — BM25 search + tree navigation via MCP. Inspired by PageIndex and Pagefind.",
-+  "description": "Local search backend for code and docs that AI agents can navigate. BM25 + AST-based tree navigation, no embeddings, no vector DB, no LLM calls. Use as an MCP server or embed as a library. TypeScript, Python, Go, Rust, Java, C++, and more.",
++  "description": "Local search backend for code, docs, and structured data that AI agents can navigate. BM25 search, regex grep, AST tree navigation, and O(1) row lookup over markdown, source code, and CSV/JSONL. No embeddings, no vector DB, no LLM calls. Use as an MCP server or embed as a library. TypeScript, Python, Go, Rust, Java, C++, and more.",
 ```
 
 - [ ] **Step 2: Replace keywords block**
@@ -445,9 +464,15 @@ Apply this exact edit:
 +    "search",
 +    "local-search",
 +    "bm25",
++    "grep",
++    "regex-search",
 +    "rag",
 +    "rag-alternative",
 +    "tree-navigation",
++    "csv",
++    "jsonl",
++    "structured-data",
++    "data-search",
 +    "agents",
 +    "ai-agents",
 +    "llm",
@@ -493,11 +518,11 @@ Open `README.md`. Replace the current title block and tagline (`# treenav` plus 
 ```markdown
 # treenav
 
-**A local search backend for code and docs that AI agents can navigate.**
+**A local search backend for code, docs, and structured data that AI agents can navigate.**
 
-BM25 + AST-based tree navigation over markdown documentation and source code — TypeScript, JavaScript, Python, Go, Rust, Java, Kotlin, Scala, C, C++, C#, Ruby, Swift, PHP, and more. Use it as an MCP server, an HTTP service, or a library you embed in your own MCP. No vector DB, no embeddings, no LLM calls at index or query time.
+BM25 search, literal/regex grep, AST-based tree navigation, and O(1) row lookup — over markdown documentation, source code, and CSV/JSONL data. Code parsers cover TypeScript, JavaScript, Python, Go, Rust, Java, Kotlin, Scala, C, C++, C#, Ruby, Swift, PHP, and more. Use it as an MCP server, an HTTP service, or a library you embed in your own MCP. No vector DB, no embeddings, no LLM calls at index or query time.
 
-**Works with:** [Claude Code](https://claude.com/claude-code), [Claude Desktop](https://claude.ai), [Cursor](https://cursor.sh), [Cline](https://github.com/cline/cline), [Continue](https://continue.dev), [Goose](https://github.com/block/goose), or any MCP-compatible client. Also runnable as a standalone HTTP service or as a TypeScript library imported into your own MCP server.
+**Works with:** [Claude Code](https://claude.com/claude-code), [Claude Desktop](https://claude.ai), [Cursor](https://cursor.sh), [Cline](https://github.com/cline/cline), [Continue](https://continue.dev), [Goose](https://github.com/block/goose), or any MCP-compatible client. Also runnable as a standalone HTTP service, as a TypeScript library imported into your own MCP server, or via `bunx treenav init` to wire treenav into a host's MCP config in one command.
 
 ## Why not just grep or RAG?
 ```
@@ -559,17 +584,17 @@ Expected: prints line count > 0 (no parse since Bun has no built-in YAML, but re
 **Files:**
 - Modify: `CLAUDE.md`
 
-- [ ] **Step 1: Replace the project-overview tagline**
+- [ ] **Step 1: Replace the project-overview tagline and top heading**
 
-Open `CLAUDE.md`. Find the `## Project Overview` section. Replace its first paragraph with:
+Open `CLAUDE.md`. The Phase 1 sed will already have changed `# CLAUDE.md — treenav-mcp` to `# CLAUDE.md — treenav`. Now find the `## Project Overview` section and replace its first paragraph with text that adds the "MCP server / HTTP service / library" framing while preserving every accurate scope detail (grep, CSV/JSONL, lookup_row, language list):
 
 ```markdown
 ## Project Overview
 
-treenav is a local search backend for code and source-code documentation that AI agents can navigate. It exposes BM25 search + AST-based hierarchical tree navigation over markdown docs and source code, available as an MCP server, an HTTP service, or a TypeScript library you embed in your own MCP. Agents get a table of contents they can reason over — for both docs and code — then retrieve only the sections or symbols they need. Supports AST-based code navigation for TypeScript, JavaScript, Python, Go, Rust, Java, Kotlin, Scala, C, C++, C#, Ruby, Swift, PHP, and more. No vector DB, no embeddings, no LLM calls at index or retrieval time.
+treenav is a local search backend for code, docs, and structured data that AI agents can navigate. Available as an MCP server (`treenav serve`), an HTTP service (`treenav serve:http`), or a TypeScript library you import into your own MCP server. It provides BM25 search, literal/regex grep, hierarchical tree navigation, and O(1) row lookup over markdown documentation, source code, and CSV/JSONL data. Agents get a table of contents they can reason over — for docs, code, and tabular data — then retrieve only the sections, symbols, or rows they need. Supports AST-based code navigation for TypeScript, Python, Go, Rust, Java, C/C++, and more. No vector DB, no embeddings, no LLM calls at index or retrieval time.
 ```
 
-The rest of `CLAUDE.md` should be left intact unless a stale ref is found in the next step.
+The rest of `CLAUDE.md` (Architecture, Data Flow, Environment Variables, MCP Tools, CLI Wrappers, etc.) should be left intact unless a stale ref is found in the next step.
 
 - [ ] **Step 2: Grep for any remaining stale phrasing**
 
