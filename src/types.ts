@@ -292,6 +292,15 @@ export interface RankingParams {
    *  often pull in unrelated code. Default 0.5. Set to 1.0 to disable
    *  dampening. */
   symbol_query_subtoken_dampener: number;
+
+  /** Additive bonus for nodes whose match positions cluster within a small
+   *  window. For nodes longer than 2× the corpus average node length, the
+   *  scorer adds `window_density_bonus * (best_window_count / window_size)`
+   *  to the node's score. Rewards focused matches in long bodies — a 200-line
+   *  function with 5 matches in 30 tokens beats one with 5 matches scattered
+   *  over 200 tokens. Short nodes are unaffected (their tf-idf already
+   *  concentrates matches). Default 1.0. Set to 0 to disable. */
+  window_density_bonus: number;
 }
 
 export const DEFAULT_RANKING: RankingParams = {
@@ -309,6 +318,7 @@ export const DEFAULT_RANKING: RankingParams = {
   subtoken_weight: 0.5,
   symbol_query_definition_boost_multiplier: 1.5,
   symbol_query_subtoken_dampener: 0.5,
+  window_density_bonus: 1.0,
 };
 
 // ── Collection configuration (Pagefind multisite inspired) ──────────
