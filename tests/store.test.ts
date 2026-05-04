@@ -1626,6 +1626,121 @@ describe("query-shape-aware multipliers", () => {
   });
 });
 
+// ── Window-density ranking signal ───────────────────────────────────
+
+describe("window density bonus", () => {
+  let store: DocumentStore;
+
+  beforeEach(() => {
+    store = new DocumentStore();
+  });
+
+  // Build a long node with a controlled distribution of `auth` matches.
+  // `clustered`: all matches packed in the first 30 tokens.
+  // `sparse`: matches spread evenly across the whole 600-token body.
+  function longNodeWith(matches: "clustered" | "sparse", doc_id: string): IndexedDocument {
+    const TOTAL = 600;
+    const N_MATCHES = 6;
+    const tokens: string[] = new Array(TOTAL).fill("filler");
+    if (matches === "clustered") {
+      for (let i = 0; i < N_MATCHES; i++) tokens[i] = "auth";
+    } else {
+      const stride = Math.floor(TOTAL / N_MATCHES);
+      for (let i = 0; i < N_MATCHES; i++) tokens[i * stride] = "auth";
+    }
+    const content = tokens.join(" ");
+    return makeDoc({
+      meta: { doc_id, file_path: `${doc_id}.ts`, collection: "code", title: doc_id },
+      tree: [makeNode({
+        node_id: `${doc_id}:n1`,
+        title: `function bigFunc_${doc_id}`,
+        content,
+        word_count: TOTAL,
+      })],
+      root_nodes: [`${doc_id}:n1`],
+    });
+  }
+
+  function shortFiller(doc_id: string): IndexedDocument {
+    return makeDoc({
+      meta: { doc_id, file_path: `${doc_id}.ts`, collection: "code", title: doc_id },
+      tree: [makeNode({
+        node_id: `${doc_id}:n1`,
+        title: `function tiny_${doc_id}`,
+        content: "filler filler filler",
+        word_count: 3,
+      })],
+      root_nodes: [`${doc_id}:n1`],
+    });
+  }
+
+  test("clustered matches in a long node outscore sparse matches in another long node", () => {
+    // Add several short filler docs so the corpus avg node length is small,
+    // making the two 600-token docs qualify as "long" (> 2 × avg).
+    const fillers = Array.from({ length: 20 }, (_, i) => shortFiller(`code:filler${i}`));
+    store.load([
+      ...fillers,
+      longNodeWith("clustered", "code:clustered"),
+      longNodeWith("sparse", "code:sparse"),
+    ]);
+
+    store.setRanking({ window_density_bonus: 0 });
+    const baseline = store.searchDocuments("auth");
+    const baseClust = baseline.find((r) => r.doc_id === "code:clustered")!.score;
+    const baseSparse = baseline.find((r) => r.doc_id === "code:sparse")!.score;
+    // Without density bonus, BM25 alone has both at the same tf and length,
+    // so they should score identically.
+    expect(baseClust).toBeCloseTo(baseSparse, 2);
+
+    store.setRanking({ window_density_bonus: 50 });
+    const boosted = store.searchDocuments("auth");
+    const boostClust = boosted.find((r) => r.doc_id === "code:clustered")!.score;
+    const boostSparse = boosted.find((r) => r.doc_id === "code:sparse")!.score;
+
+    expect(boostClust).toBeGreaterThan(boostSparse);
+    expect(boosted[0].doc_id).toBe("code:clustered");
+  });
+
+  test("short nodes (≤ 2× avgNodeLength) are NOT eligible for the bonus", () => {
+    // A short node and a long node with similar density.
+    store.load([
+      makeDoc({
+        meta: { doc_id: "code:short", file_path: "short.ts", collection: "code", title: "short" },
+        tree: [makeNode({
+          node_id: "code:short:n1",
+          title: "function tiny",
+          content: "auth auth auth filler filler",
+          word_count: 5,
+        })],
+        root_nodes: ["code:short:n1"],
+      }),
+      longNodeWith("clustered", "code:long"),
+    ]);
+
+    store.setRanking({ window_density_bonus: 0 });
+    const baselineShort = store.searchDocuments("auth").find((r) => r.doc_id === "code:short")!.score;
+
+    store.setRanking({ window_density_bonus: 50 });
+    const boostedShort = store.searchDocuments("auth").find((r) => r.doc_id === "code:short")!.score;
+
+    // The short node — well below the 2× avgNodeLength gate — should be unaffected.
+    expect(boostedShort).toBeCloseTo(baselineShort, 2);
+  });
+
+  test("setRanking({ window_density_bonus: 0 }) disables the bonus entirely", () => {
+    const fillers = Array.from({ length: 20 }, (_, i) => shortFiller(`code:filler${i}`));
+    store.load([...fillers, longNodeWith("clustered", "code:big")]);
+
+    store.setRanking({ window_density_bonus: 0 });
+    const off = store.searchDocuments("auth").find((r) => r.doc_id === "code:big")!.score;
+
+    store.setRanking({ window_density_bonus: 100 });
+    const on = store.searchDocuments("auth").find((r) => r.doc_id === "code:big")!.score;
+
+    expect(on).toBeGreaterThan(off);
+  });
+});
+
 // ── resolveRef ──────────────────────────────────────────────────────
 
 describe("resolveRef", () => {

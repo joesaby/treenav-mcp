@@ -782,7 +782,7 @@ export class DocumentStore {
     }
 
     // Apply co-occurrence bonuses
-    for (const [, entry] of nodeScores) {
+    for (const [nodeKey, entry] of nodeScores) {
       const matchCount = entry.matchedTerms.size;
 
       if (matchCount > 1) {
@@ -826,6 +826,18 @@ export class DocumentStore {
         const colWeight =
           this.collectionWeights.get(doc.meta.collection) ?? 1.0;
         entry.score *= colWeight;
+
+        // Apply window-density bonus for long nodes. Rewards focused match
+        // clusters in long bodies (e.g. a 200-line function with 5 matches in
+        // 30 tokens beats one with 5 matches scattered across 200 tokens).
+        // Short nodes get tf-idf concentration for free, so skip them.
+        if (this.ranking.window_density_bonus > 0) {
+          const stats = this.nodeStats.get(nodeKey);
+          if (stats && stats.total_tokens > 2 * this.avgNodeLength) {
+            const density = bestWindowDensity(entry.positions, WINDOW_DENSITY_SIZE);
+            entry.score += this.ranking.window_density_bonus * density;
+          }
+        }
       }
     }
 
@@ -1368,6 +1380,29 @@ function compileGrepRegex(opts: GrepOptions): RegExp {
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// ── Window-density helper for long-node ranking signal ─────────────
+//
+// Sliding-window scan over sorted match positions. Returns the highest
+// density (matches-per-window-token) seen, where a window is a contiguous
+// span of `windowSize` token positions. A focused cluster of 5 matches in
+// a 30-token window scores 5/30 = 0.167; the same 5 matches scattered over
+// 200 tokens score 1/30 = 0.033.
+
+const WINDOW_DENSITY_SIZE = 30;
+
+function bestWindowDensity(positions: number[], windowSize: number): number {
+  if (positions.length === 0 || windowSize <= 0) return 0;
+  const sorted = [...positions].sort((a, b) => a - b);
+  let bestCount = 1;
+  let left = 0;
+  for (let right = 0; right < sorted.length; right++) {
+    while (sorted[right] - sorted[left] >= windowSize) left++;
+    const count = right - left + 1;
+    if (count > bestCount) bestCount = count;
+  }
+  return bestCount / windowSize;
 }
 
 // ── Query-shape detection (Semble-inspired adaptive weighting) ──────
