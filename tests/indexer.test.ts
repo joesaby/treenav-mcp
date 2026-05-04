@@ -217,6 +217,23 @@ describe("indexFile", () => {
     }
   });
 
+  test("markdown TreeNodes do not have symbol_kind or symbol_name set", async () => {
+    const dir = await setupTempDir();
+    try {
+      const filePath = join(dir, "test.md");
+      await writeFile(filePath, SIMPLE_DOC);
+
+      const result = await indexFile(filePath, dir, "test");
+
+      for (const node of result.tree) {
+        expect(node.symbol_kind).toBeUndefined();
+        expect(node.symbol_name).toBeUndefined();
+      }
+    } finally {
+      await cleanupTempDir();
+    }
+  });
+
   test("extracts facets from non-reserved frontmatter keys", async () => {
     const dir = await setupTempDir();
     try {

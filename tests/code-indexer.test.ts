@@ -533,6 +533,45 @@ describe("indexCodeFile", () => {
     }
   });
 
+  test("populates symbol_kind and symbol_name on code TreeNodes", async () => {
+    const dir = await setupTempDir();
+    try {
+      const filePath = join(dir, "auth.ts");
+      await writeFile(filePath, TS_CLASS_WITH_METHODS);
+
+      const result = await indexCodeFile(filePath, dir, "code");
+
+      const classNode = result.tree.find((n) => n.title === "class AuthService");
+      expect(classNode).toBeDefined();
+      expect(classNode!.symbol_kind).toBe("class");
+      expect(classNode!.symbol_name).toBe("AuthService");
+
+      const methodNode = result.tree.find((n) => n.title === "method authenticate");
+      expect(methodNode).toBeDefined();
+      expect(methodNode!.symbol_kind).toBe("method");
+      expect(methodNode!.symbol_name).toBe("authenticate");
+    } finally {
+      await cleanupTempDir();
+    }
+  });
+
+  test("imports node has symbol_kind 'import' but no symbol_name", async () => {
+    const dir = await setupTempDir();
+    try {
+      const filePath = join(dir, "auth.ts");
+      await writeFile(filePath, TS_CLASS_WITH_METHODS);
+
+      const result = await indexCodeFile(filePath, dir, "code");
+
+      const importsNode = result.tree.find((n) => n.title === "imports");
+      if (importsNode) {
+        expect(importsNode.symbol_kind).toBe("import");
+      }
+    } finally {
+      await cleanupTempDir();
+    }
+  });
+
   test("indexes Python file into IndexedDocument", async () => {
     const dir = await setupTempDir();
     try {

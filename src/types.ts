@@ -29,6 +29,18 @@ export interface TreeNode {
   word_count: number;
   line_start: number;
   line_end: number;
+  /**
+   * For code-indexed nodes: the symbol kind (class, function, interface, ...).
+   * Undefined for markdown nodes. Consumed by the scorer for definition boost
+   * and by find_symbol for kind filtering.
+   */
+  symbol_kind?: string;
+  /**
+   * For code-indexed nodes: the bare symbol name (e.g. "AuthService"),
+   * without the kind prefix that lives in `title` ("class AuthService").
+   * Undefined for markdown nodes.
+   */
+  symbol_name?: string;
 }
 
 /** Compact tree representation for agent consumption (no content) */
