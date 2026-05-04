@@ -235,15 +235,40 @@ export interface RankingParams {
   description_weight: number;
 
   /** Bonus per additional query term co-occurring in the same node.
-   *  Rewards sections that match multiple aspects of the query. Default 2.0 */
+   *  Rewards sections that match multiple aspects of the query.
+   *  RRF-rescaled default: 0.01 (was 2.0 in the pre-RRF additive scorer).
+   *  See Tier 3 of the Semble feature port plan for the rescaling rationale —
+   *  RRF fused scores live in `~[0, 0.05]`, so additive bonuses had to
+   *  shrink by ~2 orders of magnitude to remain meaningful but not
+   *  dominant. */
   term_proximity_bonus: number;
 
-  /** Flat bonus when ALL query terms present in a single node. Default 5.0 */
+  /** Flat bonus when ALL query terms present in a single node.
+   *  RRF-rescaled default: 0.05 (was 5.0). Sized at roughly the RRF max for
+   *  a three-signal pipeline — large enough to promote a full-coverage
+   *  rank-2 above a partial-coverage rank-1, but bounded so it doesn't
+   *  flatten the rank scale. */
   full_coverage_bonus: number;
 
   /** Discount factor for prefix matches (0-1). Default 0.5.
-   *  Pagefind handles this at the chunk-loading level; we apply as a score multiplier. */
+   *  Pagefind handles this at the chunk-loading level; we apply as a score multiplier.
+   *  Post-Tier-3: also acts as the legacy fallback default for
+   *  `signal_weights.bm25_prefix` when the latter is left undefined. */
   prefix_penalty: number;
+
+  /** RRF (Reciprocal Rank Fusion) tuning constant. Each retrieval signal
+   *  produces a per-document rank (1, 2, 3, …); the contribution to the
+   *  fused score is `signal_weight / (rrf_k + rank)`. Standard literature
+   *  default is 60. Lower values steepen the rank curve (top hits dominate
+   *  more), higher values flatten it. Default 60. */
+  rrf_k: number;
+
+  /** Per-signal RRF weights. Each entry is the multiplier applied to that
+   *  signal's `1 / (rrf_k + rank)` contribution. Missing keys fall back
+   *  to legacy params: `bm25_exact` defaults to 1.0, `bm25_prefix` falls
+   *  back to `prefix_penalty`, `subtoken` falls back to `subtoken_weight`.
+   *  Set a value to 0 to disable that signal entirely for the next call. */
+  signal_weights: Record<string, number>;
 
   /** Multiplier applied to a code node's score when a query term exactly matches
    *  its `symbol_name` AND its `symbol_kind` is a definition-kind (class, function,
@@ -286,12 +311,24 @@ export interface RankingParams {
    *  Set to 1.0 to disable. */
   symbol_query_definition_boost_multiplier: number;
 
-  /** When the query looks identifier-shaped, `subtoken_weight` is multiplied
-   *  by this factor for that single query. The user typed a specific
-   *  identifier — they want exact matches, not loose subtoken matches that
-   *  often pull in unrelated code. Default 0.5. Set to 1.0 to disable
-   *  dampening. */
+  /** When the query looks identifier-shaped, the `subtoken` RRF signal
+   *  weight is multiplied by this factor for that single query. The user
+   *  typed a specific identifier — they want exact matches, not loose
+   *  subtoken matches that often pull in unrelated code. Default 0.5.
+   *  Set to 1.0 to disable dampening.
+   *
+   *  Pre-Tier-3 this multiplied the legacy `subtoken_weight` knob inline;
+   *  post-Tier-3 it is layered onto the resolved `signal_weights.subtoken`
+   *  value (PR 7 of the Semble feature port). */
   symbol_query_subtoken_dampener: number;
+
+  /** When the query looks identifier-shaped, the `bm25_exact` RRF signal
+   *  weight is multiplied by this factor for that single query —
+   *  symbol-shaped queries should weight the exact-match retriever more
+   *  heavily relative to the prefix and subtoken retrievers. Default 1.3.
+   *  Set to 1.0 to disable. Companion to `symbol_query_subtoken_dampener`,
+   *  added in PR 7 of the Semble feature port. */
+  symbol_query_exact_boost: number;
 
   /** Additive bonus for nodes whose match positions cluster within a small
    *  window. For nodes longer than 2× the corpus average node length, the
@@ -299,7 +336,9 @@ export interface RankingParams {
    *  to the node's score. Rewards focused matches in long bodies — a 200-line
    *  function with 5 matches in 30 tokens beats one with 5 matches scattered
    *  over 200 tokens. Short nodes are unaffected (their tf-idf already
-   *  concentrates matches). Default 1.0. Set to 0 to disable. */
+   *  concentrates matches). RRF-rescaled default: 0.005 (was 1.0). Best
+   *  density caps at 1.0, so the bonus caps at 0.005 — about 10% of RRF max
+   *  in a three-signal pipeline. */
   window_density_bonus: number;
 }
 
@@ -309,8 +348,17 @@ export const DEFAULT_RANKING: RankingParams = {
   title_weight: 3.0,
   code_weight: 1.5,
   description_weight: 2.0,
-  term_proximity_bonus: 2.0,
-  full_coverage_bonus: 5.0,
+  // Additive bonus defaults rescaled for Tier 3 RRF score scale (~[0, 0.05]).
+  // See per-field doc comments above for rationale. The plan's initial
+  // table proposed 0.005/0.01/0.005; sweeping over the search-quality
+  // QRels showed a regression on multi-term exact-match queries
+  // ("rate limiting", "kubernetes rolling update deployment", "oauth")
+  // where canonical doc nodes were not pulled clear of incidental hits.
+  // Doubling tp and lifting fc to 0.05 (still ≈ RRF max so a flat lift
+  // can promote rank-2 over rank-1 without flattening the scale)
+  // restores exact-match NDCG@10 above the 0.83 gate.
+  term_proximity_bonus: 0.01,
+  full_coverage_bonus: 0.05,
   prefix_penalty: 0.5,
   definition_boost: 2.0,
   file_coherence_bonus: 0.05,
@@ -318,7 +366,14 @@ export const DEFAULT_RANKING: RankingParams = {
   subtoken_weight: 0.5,
   symbol_query_definition_boost_multiplier: 1.5,
   symbol_query_subtoken_dampener: 0.5,
-  window_density_bonus: 1.0,
+  symbol_query_exact_boost: 1.3,
+  window_density_bonus: 0.005,
+  // RRF fusion (Tier 3): k=60 is the standard literature default. Per-signal
+  // weights default to {1.0, prefix_penalty, subtoken_weight} via the
+  // resolution rules in store.ts so existing tuning of the legacy knobs
+  // continues to work.
+  rrf_k: 60,
+  signal_weights: {},
 };
 
 // ── Collection configuration (Pagefind multisite inspired) ──────────

@@ -1626,6 +1626,228 @@ describe("query-shape-aware multipliers", () => {
   });
 });
 
+// ── RRF fusion (Tier 3) ─────────────────────────────────────────────
+//
+// Reciprocal Rank Fusion (RRF) refactor of the term-loop scorer. Each
+// retrieval signal (exact / prefix / subtoken) produces its own ranked
+// list; the lists are fused via `weight / (rrf_k + rank)`. Pre-Tier-3
+// the same loop summed weighted BM25 contributions directly into one
+// score. The tests below pin down the new behavior at the ranking
+// level — absolute scores are intentionally not asserted because the
+// score scale is calibrated separately.
+describe("RRF fusion", () => {
+  let store: DocumentStore;
+
+  beforeEach(() => {
+    store = new DocumentStore();
+  });
+
+  function rrfDoc(doc_id: string, file_path: string, content: string, opts: Partial<TreeNode> = {}): IndexedDocument {
+    return makeDoc({
+      meta: { doc_id, file_path, collection: "code" },
+      tree: [makeNode({
+        node_id: `${doc_id}:n1`,
+        title: opts.title ?? "function handler",
+        content,
+        symbol_kind: opts.symbol_kind ?? "function",
+        symbol_name: opts.symbol_name ?? "handler",
+      })],
+      root_nodes: [`${doc_id}:n1`],
+    });
+  }
+
+  test("rrf_k is configurable — changing k changes scores measurably", () => {
+    store.load([
+      rrfDoc("code:a", "a.ts", "function a() { return process(); }"),
+      rrfDoc("code:b", "b.ts", "function b() { return process(); }"),
+    ]);
+
+    store.setRanking({ rrf_k: 60 });
+    const k60 = store.searchDocuments("process")[0].score;
+
+    store.setRanking({ rrf_k: 10 });
+    const k10 = store.searchDocuments("process")[0].score;
+
+    // Smaller k → larger 1/(k+rank) → larger absolute scores.
+    expect(k10).toBeGreaterThan(k60);
+  });
+
+  test("legacy params drive signal_weights when not explicitly set", () => {
+    store.load([
+      rrfDoc("code:p", "p.ts", "function processData() { /* parse */ }",
+        { symbol_name: "processData", title: "function processData" }),
+    ]);
+
+    // prefix_penalty=0 zeros the prefix signal contribution because
+    // signal_weights.bm25_prefix falls back to prefix_penalty.
+    store.setRanking({ prefix_penalty: 0, signal_weights: {} });
+    const noPrefix = store.searchDocuments("proc");
+
+    store.setRanking({ prefix_penalty: 0.5, signal_weights: {} });
+    const withPrefix = store.searchDocuments("proc");
+
+    // "proc" only hits via prefix (no exact "proc" token in corpus).
+    expect(withPrefix.length).toBeGreaterThan(0);
+    expect(noPrefix.length === 0 || withPrefix[0].score > noPrefix[0].score).toBe(true);
+  });
+
+  test("signal_weights.bm25_exact = 0 zeros the exact-match contribution", () => {
+    store.load([
+      rrfDoc("code:e", "e.ts", "function exact() { /* nothing else */ }",
+        { symbol_name: "exact", title: "function exact" }),
+    ]);
+
+    // With bm25_exact=0 the only signals available are prefix + subtoken.
+    // "exact" has no prefix expansion and a single-token symbol_name has
+    // no subtoken split, so the search returns nothing.
+    store.setRanking({ signal_weights: { bm25_exact: 0, bm25_prefix: 0, subtoken: 0 } });
+    const zeroed = store.searchDocuments("exact");
+    expect(zeroed.length).toBe(0);
+
+    store.setRanking({ signal_weights: { bm25_exact: 1.0, bm25_prefix: 0.5, subtoken: 0.5 } });
+    const baseline = store.searchDocuments("exact");
+    expect(baseline.length).toBeGreaterThan(0);
+  });
+
+  test("a doc hit by every signal beats one hit by only the strongest signal", () => {
+    // doc multi: identifier 'renderRow' contains 'render' as a subtoken
+    //   AND the body contains the literal token 'render' (exact match).
+    //   So 'render' hits exact, prefix (render→renderrow), and subtoken.
+    // doc single: only the literal token 'render' appears in the body.
+    //   So 'render' hits exact only — even though it's the canonical
+    //   exact match (rank 1 in that signal).
+    store.load([
+      rrfDoc("code:multi", "multi.ts",
+        "function renderRow() { return render(); }",
+        { symbol_name: "renderRow", title: "function renderRow" }),
+      rrfDoc("code:single", "single.ts",
+        "function helper() { return render(); }",
+        { symbol_name: "helper", title: "function helper" }),
+    ]);
+
+    // Disable definition_boost and adaptive weighting so we isolate the
+    // RRF behavior — we want to verify the multi-signal hit wins on
+    // rank fusion alone, not because of any per-node multiplier.
+    store.setRanking({
+      definition_boost: 1.0,
+      symbol_query_definition_boost_multiplier: 1.0,
+      symbol_query_subtoken_dampener: 1.0,
+      symbol_query_exact_boost: 1.0,
+    });
+
+    const results = store.searchDocuments("render");
+    expect(results.length).toBeGreaterThanOrEqual(2);
+    // Multi-signal node (3 signals) should beat the single-signal node.
+    // In the pre-RRF additive scorer, the single doc had a slightly
+    // higher BM25 score because its content has higher TF for 'render'
+    // relative to length; RRF ignores absolute BM25 magnitude inside
+    // a signal and rewards multi-signal coverage instead.
+    expect(results[0].doc_id).toBe("code:multi");
+  });
+});
+
+// ── Adaptive signal weighting (Tier 3 / PR 7) ───────────────────────
+//
+// On a symbol-shaped query, the bm25_exact signal_weight is multiplied
+// by `symbol_query_exact_boost` and the subtoken signal_weight is
+// multiplied by `symbol_query_subtoken_dampener`. The legacy PR 5 path
+// that adjusted `subtoken_weight` directly inside `searchDocuments`
+// has been replaced by signal-level weighting — `subtoken_weight`
+// only feeds into `signal_weights.subtoken` as a fallback default now.
+describe("RRF adaptive signal weighting", () => {
+  let store: DocumentStore;
+
+  beforeEach(() => {
+    store = new DocumentStore();
+  });
+
+  function defNode(symbol_kind: string, symbol_name: string, content: string): TreeNode {
+    return makeNode({
+      node_id: `code:${symbol_name}:n1`,
+      title: `${symbol_kind} ${symbol_name}`,
+      content,
+      symbol_kind,
+      symbol_name,
+    });
+  }
+
+  test("symbol-shaped query bumps bm25_exact via symbol_query_exact_boost", () => {
+    store.load([
+      makeDoc({
+        meta: { doc_id: "code:a", file_path: "a.ts", collection: "code" },
+        tree: [defNode("function", "parseConfig", "function parseConfig() { return load(); }")],
+        root_nodes: ["code:parseConfig:n1"],
+      }),
+      makeDoc({
+        meta: { doc_id: "code:b", file_path: "b.ts", collection: "code" },
+        tree: [defNode("function", "helper", "function helper() { /* parseConfig is mentioned in a comment */ return parseConfig(); }")],
+        root_nodes: ["code:helper:n1"],
+      }),
+    ]);
+
+    // boost = 1.0 (off): scores unaffected
+    store.setRanking({ symbol_query_exact_boost: 1.0 });
+    const baseline = store.searchDocuments("parseConfig")[0].score;
+
+    // boost = 2.0: exact signal weight doubles for this single search,
+    // raising every node's exact-signal contribution.
+    store.setRanking({ symbol_query_exact_boost: 2.0 });
+    const bumped = store.searchDocuments("parseConfig")[0].score;
+
+    expect(bumped).toBeGreaterThan(baseline);
+  });
+
+  test("symbol-shaped query dampens subtoken via symbol_query_subtoken_dampener", () => {
+    // Node only reachable via subtoken — 'frontmatter' is a subtoken of
+    // 'parseFrontmatter'. Multi-token query forces a symbol-shaped flag
+    // via the all-caps 'BM25' part.
+    store.load([
+      makeDoc({
+        meta: { doc_id: "code:sub", file_path: "sub.ts", collection: "code" },
+        tree: [defNode("function", "parseFrontmatter", "function parseFrontmatter() { return {}; }")],
+        root_nodes: ["code:parseFrontmatter:n1"],
+      }),
+    ]);
+
+    store.setRanking({
+      signal_weights: { bm25_exact: 1.0, bm25_prefix: 0.5, subtoken: 1.0 },
+      symbol_query_subtoken_dampener: 1.0, // off
+    });
+    const baseline = store.searchDocuments("BM25 frontmatter");
+
+    store.setRanking({
+      signal_weights: { bm25_exact: 1.0, bm25_prefix: 0.5, subtoken: 1.0 },
+      symbol_query_subtoken_dampener: 0.1,
+    });
+    const dampened = store.searchDocuments("BM25 frontmatter");
+
+    expect(baseline.length).toBeGreaterThan(0);
+    expect(dampened.length).toBeGreaterThan(0);
+    expect(dampened[0].score).toBeLessThan(baseline[0].score);
+  });
+
+  test("natural-language query is unaffected by symbol_query_exact_boost", () => {
+    store.load([
+      makeDoc({
+        meta: { doc_id: "code:nl", file_path: "p.ts", collection: "code" },
+        tree: [defNode("function", "authenticate", "function authenticate() { /* logs in user */ }")],
+        root_nodes: ["code:authenticate:n1"],
+      }),
+    ]);
+
+    // Natural-language: lowercase, no underscore, no acronym.
+    store.setRanking({ symbol_query_exact_boost: 1.0 });
+    const a = store.searchDocuments("authenticate")[0].score;
+
+    store.setRanking({ symbol_query_exact_boost: 5.0 });
+    const b = store.searchDocuments("authenticate")[0].score;
+
+    // Multiplier is gated on isSymbolShapedQuery — natural-language
+    // query → multiplier ignored → identical scores.
+    expect(b).toBeCloseTo(a, 6);
+  });
+});
+
 // ── Window-density ranking signal ───────────────────────────────────
 
 describe("window density bonus", () => {

@@ -165,7 +165,11 @@ export function findSimilar(
   }
 ): FindSimilarResult {
   const limit = options?.limit ?? 5;
-  const minScore = options?.threshold ?? 0.1;
+  // Tier 3 RRF: fused scores live in `~[0, 0.05]` per signal, so the
+  // pre-RRF threshold of 0.1 was unreachable. We use a small RRF-scale
+  // cutoff that still drops "no real overlap" results while letting
+  // genuine overlaps (≥ 1 / (rrf_k + 1) ≈ 0.016) survive.
+  const minScore = options?.threshold ?? 0.001;
   const dupThreshold = options?.duplicateThreshold ?? DEFAULT_DUPLICATE_THRESHOLD;
 
   const tokens = tokenizeForQuery(content);
