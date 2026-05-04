@@ -206,25 +206,29 @@ If all three answers are favorable:
 
 ### Task 4.1: Pure-TS Model2Vec runtime (preferred path)
 
-**Rationale:** Model2Vec inference is *literally* tokenize → per-token lookup in a fixed embedding table → mean-pool. No forward pass, no attention. A tensor execution engine (`onnxruntime-node`, ~50MB native binary, no Alpine/musl prebuilt, spotty Linux ARM64 prebuilts) is massive overkill for a hashmap lookup and a mean. Implementing it directly in TypeScript preserves the "no binary deps" install story and keeps the install footprint to just the model weights.
+**Rationale:** Model2Vec inference is *literally* tokenize → per-token lookup in a fixed embedding table → mean-pool → optional L2-normalize. No forward pass, no attention. PCA and Zipf weighting are baked into the embedding matrix at distillation time, not applied at runtime. A tensor execution engine (`onnxruntime-node`, ~50MB native binary, no Alpine/musl prebuilt, spotty Linux ARM64 prebuilts) is massive overkill for a hashmap lookup and a mean. Implementing it directly in TypeScript preserves the "no binary deps" install story and keeps the install footprint to just the model weights.
 
 `model2vec-rs` was considered and rejected: it ships only a Rust crate + CLI + experimental browser-WASM build. There are no Node/NAPI bindings, so using it from Bun would require either writing our own NAPI layer, shelling out to a CLI per query (latency unacceptable), or an unproven WASM-via-`bun:ffi` integration. All three are larger projects than just porting the inference loop.
 
+**Embedding-equivalence claim.** Because PCA and Zipf weighting are baked into the matrix and runtime is plain mean-pool, our embeddings will be **bit-equivalent (within float32 epsilon) to Semble's** for any input string both tokenizers tokenize identically. Quality parity therefore hinges on tokenizer fidelity, not on inference math. Validation gate before merging PR 9: golden-vector test — encode a fixed corpus of 100 strings (mix of natural language, identifiers, code) with the reference Python `model2vec` library AND our pure-TS path; assert max cosine distance ≤ 1e-5 per pair. Any divergence is a tokenizer bug we must fix before claiming parity.
+
 **Files:**
-- Add: `src/embeddings.ts` — tokenizer load + embedding-matrix `mmap` + lookup + mean-pool (~50–100 lines)
+- Add: `src/embeddings.ts` — tokenizer load + embedding-matrix `mmap` + lookup + mean-pool + optional L2 normalize (~80–120 lines)
 - Add: `src/embeddings-loader.ts` — fetch + cache the weights file on first `SEMANTIC=1` run (HuggingFace Hub URL → `$XDG_CACHE_HOME/treenav-mcp/potion-code-16M/`)
 - Modify: `src/code-indexer.ts` and `src/indexer.ts` — embed leaf nodes when `SEMANTIC=1`
 - Modify: `src/store.ts` — store `Float32Array` per node; cosine over BM25 top-K candidates only (not full corpus) for tractable latency
 - Modify: `src/types.ts` — extend `RankingParams` with semantic config
-- Modify: `package.json` — **no new runtime dependency.** Tokenizer-only use of `@huggingface/transformers` (or a hand-rolled BPE if we can avoid even that) — measure install-size impact in PR 9 and pick the lighter option.
+- Modify: `package.json` — add `@huggingface/tokenizers` as the *only* new dep (Apache-2.0, ~300KB unpacked, pure JS/TS, no native bindings, runs on any hardware where Bun runs). **Do not** use `@huggingface/transformers` — that package depends on `onnxruntime-node` + `sharp` and would silently re-introduce the binary-deps problem.
+- Add: `tests/embeddings-parity.test.ts` — golden-vector test against Python `model2vec` reference outputs (vectors checked into the repo, not regenerated at test time)
 
 **Step:**
 1. Load `potion-code-16M` weights (Model2Vec, static embeddings — no transformer inference at runtime, just token lookup + mean-pool). Fits the "no GPU, no API" claim. Read the embedding matrix into a single `Float32Array` backed by `mmap` where possible.
-2. Index time: tokenize node text → token IDs → gather rows from the embedding matrix → mean-pool → store as `Float32Array(256)` per node.
+2. Index time: tokenize node text → token IDs → gather rows from the embedding matrix → mean-pool → optionally L2-normalize → store as `Float32Array(256)` per node. Honor the model's `normalize` flag from its config (POTION models default to true).
 3. Query time: embed query the same way, cosine-rank against BM25 top-K candidates (not the whole corpus — keeps latency in Semble's ballpark).
 4. Feed cosine-ranked list into the Tier 3 RRF fuser as a third signal.
+5. Run the parity test as a CI gate; do not merge until cosine distance to reference vectors is within tolerance.
 
-**Fallback (only if pure-TS path proves blocked):** add `onnxruntime-node` as an *optional* dependency and gate `SEMANTIC=1` behind it. Document the install-size and Alpine/ARM caveats clearly in the README. Do not pursue this unless step 1 above hits an unforeseen blocker — the pure-TS path is preferred specifically because it preserves the project's install story.
+**Fallback (only if pure-TS path proves blocked):** add `onnxruntime-node` as an *optional* dependency and gate `SEMANTIC=1` behind it. Document the install-size and Alpine/ARM caveats clearly in the README. Do not pursue this unless steps 1–2 above hit an unforeseen blocker (most likely cause: tokenizer fidelity gap that can't be closed) — the pure-TS path is preferred specifically because it preserves the project's install story.
 
 ### Task 4.2: Documentation + benchmarks
 
@@ -233,9 +237,10 @@ If all three answers are favorable:
 - Add: `docs/benchmarks.md` — publish NDCG@10 with/without semantic, index time, query latency on the same corpora Semble uses if possible
 
 **Tier 4 acceptance:** Default install size + behavior unchanged. With `SEMANTIC=1`:
+- **Embedding parity**: golden-vector test (Task 4.1, step 5) passes — our embeddings match the reference Python `model2vec` output within 1e-5 cosine distance on a 100-string fixture.
 - Index time ≤ 5× the BM25-only index time on a 5k-file corpus.
 - Query p95 < 50ms.
-- NDCG@10 lift over Tier 3 ≥ 0.05 on natural-language QRels (the corpus we already control). Comparing to Semble's published 0.854 on their eval is informational only — different corpus, different ground truth, not a direct comparison.
+- NDCG@10 lift over Tier 3 ≥ 0.05 on natural-language QRels (the corpus we already control). Comparing to Semble's published 0.854 on their eval is informational only — different corpus, different ground truth, not a direct comparison. Once parity passes, retrieval-quality differences from Semble come from corpus + ranking pipeline, NOT from the embedder.
 
 ---
 
