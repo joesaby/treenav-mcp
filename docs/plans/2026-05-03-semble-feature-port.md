@@ -6,6 +6,14 @@
 
 ---
 
+## Decisions to lock before PR 1
+
+These came out of evaluation against the current code in `src/store.ts` and `src/code-indexer.ts` and shape the type signatures of subsequent tasks. Resolve them first, in this order, or PR 1 will need rework.
+
+1. **`TreeNode` shape for symbol metadata.** Today `TreeNode` carries no `symbol_kind` or `symbol_name` — `symbol_kind` is a *document-level* facet (`src/code-indexer.ts:257`) and the kind is encoded into `node.title` as a prefix (`"class AuthService"`, `src/code-indexer.ts:146`). Definition boost (Task 1.1) needs node-level access. **Decision:** add optional `symbol_kind?: string` and `symbol_name?: string` fields to `TreeNode`, populated by `symbolToTreeNode` for code-indexed docs, undefined for markdown nodes. Avoid the title-regex fallback — it leaks parser detail into the scorer.
+2. **Per-collection ranking config.** Markdown wikis may legitimately keep `legacy/` content; code roots usually want it down-ranked. **Decision:** noise patterns are configured per `CollectionConfig`, not globally on `RankingParams`. Adds a `noise_patterns?: { pattern: string; penalty: number }[]` field to `CollectionConfig`. Resolves Open Question 1.
+3. **Subtoken interaction with `full_coverage_bonus`.** A 2-word query hitting two subtokens of one identifier must NOT trigger the full-coverage bonus, otherwise `parseFrontmatter` "fully covers" the query `parse frontmatter`. **Decision:** track exact-match terms separately from subtoken-match terms; `full_coverage_bonus` fires only on exact-match coverage.
+
 ## Background
 
 [Semble](https://github.com/MinishLab/semble) (MinishLab) is a fast code-search MCP server built on a hybrid retrieval pipeline:
@@ -37,34 +45,48 @@ These slot into the existing scorer in `src/store.ts` (around the `entry.score *
 **Problem:** When a query token equals a code node's symbol name (e.g. query `parseFrontmatter` matching a function literally named `parseFrontmatter`), Treenav scores it the same as any other tf-idf hit. Definitions should rank above call-sites and references.
 
 **Files:**
+- Modify: `src/types.ts` — add `symbol_kind?: string` and `symbol_name?: string` to `TreeNode`; add `definition_boost: number` to `RankingParams` (default ~2.0)
+- Modify: `src/code-indexer.ts` — populate the new `TreeNode` fields in `symbolToTreeNode` (kind from `symbol.kind`, name from `symbol.name`)
 - Modify: `src/store.ts` — add `definition_boost` multiplier in scoring path
-- Modify: `src/types.ts` — add `definition_boost: number` to `RankingParams` (default ~2.0)
-- Test: `tests/search-quality.test.ts` — add QRels asserting definition ranks first
+- Test: `tests/search-quality.test.ts` — add QRels asserting definition ranks above call-sites
 
-**Step:** When a query token (after stemming + glossary expansion) exactly matches `node.title` and `node.symbol_kind` is set (`class`/`function`/`interface`/`method`/`type`/`enum`), multiply that node's score by `definition_boost`.
+**Step:** Match against `node.symbol_name` (not `node.title`, which is `"class AuthService"` with the kind prefix). When a query term (after stemming + glossary expansion, plus its raw form pre-stem) equals `node.symbol_name?.toLowerCase()` AND `node.symbol_kind` is one of `class`/`function`/`interface`/`method`/`type`/`enum`/`struct`/`trait`/`enum_variant`, multiply that node's score by `definition_boost`. Apply once per node regardless of how many query terms match — the boost is "this is a definition," not stackable.
 
 ### Task 1.2: Identifier-stem subtoken indexing
 
-**Problem:** Query `parse` does not match symbol `parseFrontmatter` because the indexer tokenizes the whole identifier as one term. Semble splits camelCase/snake_case/kebab-case at index time.
+**Problem:** The current scorer already does prefix matching for terms ≥3 chars at query time (`src/store.ts:623`), so `parse` already matches `parsefrontmatter` (lowercased, single-token). The actual gaps:
+
+- **Middle subtokens.** `frontmatter` does not prefix-match `parsefrontmatter`. Need true split-at-index.
+- **Stem-on-subtoken matching.** Query `parsing config` should match `parseConfig` and `ConfigParser`. Today the stemmer runs on whole tokens, so `parsing → pars` never sees `parse` inside `parseConfig`.
+- **Casing-aware splits.** `URLParser` should split as `URL`, `Parser`, not `U`, `R`, `L`, `Parser`.
 
 **Files:**
-- Modify: `src/code-indexer.ts` — emit subtokens for identifiers
-- Modify: `src/store.ts` — add a separate posting list (or weight class) for subtoken hits
-- Modify: `src/types.ts` — add `subtoken_weight` (default ~0.5)
+- Modify: `src/code-indexer.ts` — emit subtokens for identifiers in code nodes only
+- Modify: `src/store.ts` — index subtokens into a separate posting band; track subtoken matches separately from exact matches in `nodeScores`
+- Modify: `src/types.ts` — add `subtoken_weight: number` to `RankingParams` (default ~0.5)
 - Test: `tests/parsers.test.ts` + `tests/search-quality.test.ts`
 
-**Step:** At index time, for each code node, also emit subtokens by splitting `[A-Z]?[a-z]+|[A-Z]+(?=[A-Z]|$)|[0-9]+` and on `_` / `-`. Index them into a separate weighted band so a subtoken hit scores below a full-token hit but above no-match. Skip subtokens already identical to the full token.
+**Step:** At index time, for code nodes only (skip markdown to keep title-weight semantics intact), split each identifier with `/[A-Z]?[a-z]+|[A-Z]+(?=[A-Z]|$)|[0-9]+/g` and on `_` / `-`. Stem each subtoken. Add a posting marked `kind: "subtoken"` distinct from the full-token posting. In `searchDocuments`, when accumulating scores in `nodeScores`, track `exactTerms: Set<string>` and `subtokenTerms: Set<string>` separately. Apply rules:
+
+- Subtoken hit contributes `bm25_score * subtoken_weight` to the node score.
+- `term_proximity_bonus` counts the union of exact + subtoken matches (recall is the goal).
+- `full_coverage_bonus` fires ONLY when `exactTerms.size === uniqueTerms.length` (precision: no spoofing coverage with subtokens of one identifier).
+- Skip subtokens identical to the full token (avoid double-counting).
 
 ### Task 1.3: Noise penalties for tests, type stubs, legacy paths
 
-**Problem:** Test files and `.d.ts` stubs often share vocabulary with implementation files and pollute top-K. Semble down-weights these explicitly.
+**Problem:** Test files, `.d.ts` stubs, and `compat`/`legacy` shims share vocabulary with canonical implementations and pollute top-K. Semble down-weights these explicitly. Two distinct concerns to keep separate:
+
+- **Index-time exclusion** (`node_modules/`, `vendor/`, `dist/`, build outputs): if these are indexed at all, that's a `CODE_GLOB` misconfiguration. Out of scope here — fix in glob defaults, not score.
+- **Score-time penalty** (tests, `.d.ts`, `compat/`, `legacy/`, `examples/`): legitimately part of the corpus, but should rank below canonical implementations.
 
 **Files:**
-- Modify: `src/types.ts` — add `noise_patterns: { pattern: string; penalty: number }[]` to `RankingParams`
-- Modify: `src/store.ts` — apply penalty multiplier per node based on file path
+- Modify: `src/types.ts` — add `noise_patterns?: { pattern: string; penalty: number }[]` to `CollectionConfig` (per-collection, NOT global, so the markdown wiki and code root can configure independently — see Decision 2)
+- Modify: `src/store.ts` — pre-compile patterns once per collection at `load()` time (avoid per-node `RegExp` instantiation in the hot path); apply penalty multiplier per node based on `doc.meta.collection` and `doc.meta.file_path`
+- Modify: `src/code-indexer.ts` — tighten the default `CODE_GLOB` to exclude `node_modules/`, `vendor/`, `dist/`, `build/`, `.git/` (index-time, not score-time)
 - Test: `tests/search-quality.test.ts`
 
-**Step:** Default noise list (overridable per deployment):
+**Step:** Default score-time noise list applied to code collections only:
 
 ```ts
 [
@@ -72,48 +94,65 @@ These slot into the existing scorer in `src/store.ts` (around the `entry.score *
   { pattern: "\\.test\\.[a-z]+$", penalty: 0.5 },
   { pattern: "\\.spec\\.[a-z]+$", penalty: 0.5 },
   { pattern: "\\.d\\.ts$", penalty: 0.3 },
-  { pattern: "(^|/)vendor/", penalty: 0.4 },
+  { pattern: "(^|/)compat/", penalty: 0.6 },
   { pattern: "(^|/)legacy/", penalty: 0.6 },
-  { pattern: "(^|/)node_modules/", penalty: 0.1 },
+  { pattern: "(^|/)examples?/", penalty: 0.7 },
 ]
 ```
 
-Match against `node.path`; multiply final score.
+Markdown collections get an empty default — wikis often have legitimate `legacy/` content. Match against `doc.meta.file_path`; multiply final score by the lowest penalty among matching patterns (so multiple matches don't compound).
 
-### Task 1.4: Adaptive lexical weighting
+### Task 1.4: Query-shape-aware ranking adjustments
 
-**Problem:** Symbol-shaped queries (`parseFrontmatter`, `_init`, `BM25_K1`) want lexical precision; natural-language queries (`how do I configure auth`) want recall. Semble bumps lexical weight when the query looks identifier-shaped.
+**Problem:** Symbol-shaped queries (`parseFrontmatter`, `_init`, `BM25_K1`) want exact-definition precision; natural-language queries (`how do I configure auth`) want broader recall via subtokens and prefix matches. Semble's "adaptive weighting" rebalances *between* lexical and semantic retrievers — that mechanism is moot until Tier 3+ when there's a second signal to weight against. **This task is therefore moved to Tier 3.** Within Tier 1, the shape signal is still useful but applied differently:
 
 **Files:**
-- Modify: `src/store.ts` — detect query shape, scale BM25 weight before fusion (also unblocks Tier 4)
+- Modify: `src/store.ts` — detect query shape and adjust intra-Tier-1 multipliers (not BM25 weight in aggregate)
+- Modify: `src/types.ts` — add `symbol_query_definition_boost_multiplier` (default ~1.5) and `symbol_query_subtoken_dampener` (default ~0.5)
 
-**Step:** Heuristic: if the query is a single token AND matches `/[A-Z]/.test(q) || /_/.test(q) || /^[a-z]+[A-Z]/.test(q)`, treat as symbol-like and apply a `symbol_query_boost` (default ~1.3) to BM25 contributions. Otherwise leave weights unchanged.
+**Step:** Heuristic: query is "symbol-shaped" if any token matches `/[A-Z][a-z]/` (camelCase), `/_/` (snake_case), or is all-uppercase ≥2 chars (`BM25`, `URL`). When symbol-shaped:
+
+- Multiply `definition_boost` by `symbol_query_definition_boost_multiplier` for this query.
+- Multiply `subtoken_weight` by `symbol_query_subtoken_dampener` for this query (the user typed a specific identifier; subtoken matches are likely noise).
+
+For natural-language queries, leave both at defaults. This is a real behavior change in Tier 1 (unlike a flat BM25 multiplier, which would no-op when BM25 is the only signal).
 
 ### Task 1.5: File coherence bonus
 
-**Problem:** When several results come from the same file, the highest-ranked one should land at a natural entry point (top of file, exported symbol, class def) rather than a random inner method.
+**Problem:** Two related sub-problems Semble lumps under "file coherence" — keep them distinct:
+
+- **(a) Multi-chunk file boost:** when several chunks of the same file match, the file as a whole is more likely relevant than a single one-off match elsewhere. Semble boosts the *file*. This affects which files appear at all in top-K.
+- **(b) Intra-file leading node:** within the matching file, the agent reads better when the lead result is a natural entry point (file top, exported class) rather than a random inner method. Treenav-specific concern, since we expose nodes not flat chunks.
 
 **Files:**
 - Modify: `src/store.ts` — post-aggregation pass before final sort
+- Modify: `src/types.ts` — `file_coherence_bonus` (default ~0.15, applied to per-file boost) and `file_lead_bonus` (default ~0.05, applied to leading node within a multi-hit file)
 
-**Step:** After per-node accumulation, group results by `path`. For each group, give the node closest to the top of the file (or with shallowest `depth`) a small bonus (`file_coherence_bonus`, default ~0.1× max group score). Does not change which files appear, only which node within a file leads.
+**Step:** After per-node accumulation, group results by `doc_id`. For each group with ≥2 matching nodes:
 
-**Tier 1 acceptance:** Add ≥10 new QRels to `tests/search-quality.test.ts` covering definition lookups, subtoken queries, and noise filtering. Target: NDCG@10 improvement ≥0.05 on the code corpus, no regression on the markdown corpus.
+1. Add `file_coherence_bonus * (matchCount - 1) * mean(group scores)` to every node in the group (Semble-style file boost).
+2. Within the group, add `file_lead_bonus * max(group scores)` to the node with the smallest `line_start` (or shallowest `level` if `line_start` is equal — root nodes win ties).
+
+This deviates from Semble: Semble boosts the file as a unit, we boost the file *and* nudge the file's natural entry point. Worth measuring separately to confirm both bonuses earn their keep.
+
+**Tier 1 acceptance:** Add ≥12 new QRels to `tests/search-quality.test.ts` covering: (a) definition lookups vs call-sites, (b) middle-subtoken queries (`frontmatter` matching `parseFrontmatter`), (c) symbol-shaped vs natural-language splits, (d) noise filtering for `*.test.*` and `.d.ts`, (e) multi-hit file leading-node selection. Target: NDCG@10 improvement ≥0.05 on the code corpus, no regression (≥-0.01) on the markdown corpus. Run each task as its own PR with its own before/after metrics — combined improvements can mask individual regressions.
 
 ---
 
-## Tier 2 — Sub-Symbol Chunking (small refactor)
+## Tier 2 — Sub-Symbol Granularity (small refactor)
 
-**Problem:** Treenav's AST symbol extraction makes a 200-line function a single `TreeNode`. BM25 over that node loses positional precision — a query matching three lines deep in the body scores the same as one matching the signature.
+**Problem (correctly framed):** BM25 itself doesn't care about positions, only tf-idf — so the original framing ("matching three lines deep scores the same as the signature") was wrong. The actual issues with long nodes are:
 
-**Decision point:** Two options, do the cheaper one first.
+- **Snippet quality.** `buildDensitySnippet` (`src/store.ts:990`) already finds the best window, but the snippet is not used as a *ranking* signal — only for display. So a 200-line function with one cluster of matches scores the same as one with sparsely scattered matches.
+- **Per-node tf normalization.** A long node can accumulate enough tf-idf from incidental term mentions to outrank a focused short node. BM25's length norm (`bm25_b=0.75`) helps but doesn't fully cancel this for very long bodies.
 
-### Task 2.1 (preferred first): Snippet density tuning
+### Task 2.1 (preferred first): Window-density ranking signal
 
 **Files:**
-- Modify: `src/store.ts` (snippet generator)
+- Modify: `src/store.ts` — extract best-window density score during scoring, not just snippet generation
+- Modify: `src/types.ts` — add `window_density_bonus: number` (default ~1.0)
 
-**Step:** When generating snippets for long nodes, prefer windows where multiple query terms co-occur (already partially done via `term_proximity_bonus`; extend to snippet selection itself). Surface the best window as the snippet rather than the node summary. No tree changes; better answer locality for the agent.
+**Step:** During score accumulation, compute the highest density (matches-per-window-token) across a sliding window of `windowWords` tokens for nodes longer than 2× `avgNodeLength`. Add `window_density_bonus * density` to the node score. For short nodes, the existing tf-idf already concentrates matches, so skip — added work for no metric movement.
 
 ### Task 2.2 (only if 2.1 isn't enough): Sub-symbol child nodes
 
@@ -121,15 +160,17 @@ Match against `node.path`; multiply final score.
 - Modify: `src/code-indexer.ts`
 - Modify: `src/types.ts`
 
-**Step:** For nodes whose body exceeds N lines (configurable, default ~80), emit fixed-size positional windows (e.g. 20 lines, 50% overlap) as child `TreeNode`s with `symbol_kind: "fragment"`. Parent symbol node remains for navigation; BM25 hits the fragments for retrieval. Tree navigation tools (`get_tree`) hide fragments by default.
+**Step:** For nodes whose body exceeds N lines (configurable, default ~80), emit fixed-size positional windows (e.g. 20 lines, 50% overlap) as child `TreeNode`s with `symbol_kind: "fragment"`. Parent symbol node remains for navigation; BM25 hits the fragments for retrieval. Tree navigation tools (`get_tree`) hide fragments by default. Note: fragments must NOT participate in `definition_boost` (they have no symbol name) and SHOULD inherit their parent's noise penalty.
 
-**Tier 2 acceptance:** Improvement on long-function QRels in `tests/search-quality.test.ts`. Skip Task 2.2 unless the metric demands it.
+**Tier 2 acceptance:** Improvement on long-function QRels in `tests/search-quality.test.ts`. Add 3–5 QRels specifically targeting long-body matches (e.g. queries matching a single internal block of a 150+ line function). Skip Task 2.2 unless 2.1 leaves measurable headroom.
 
 ---
 
-## Tier 3 — RRF Fusion Scaffold (small, enables Tier 4)
+## Tier 3 — RRF Fusion Scaffold + Adaptive Lexical Weighting
 
-**Problem:** The current scorer sums weighted contributions into one score. To layer in semantic retrieval cleanly (Tier 4) we need ranked-list fusion, not weighted sums — score distributions across heterogeneous signals don't compose well by addition.
+**Problem:** The current scorer sums weighted contributions into one score. To layer in semantic retrieval cleanly (Tier 4) we need ranked-list fusion, not weighted sums — score distributions across heterogeneous signals don't compose well by addition. This is also the tier where Semble-style adaptive lexical weighting becomes meaningful (see Task 3.2, formerly Task 1.4).
+
+### Task 3.1: RRF refactor
 
 **Files:**
 - Modify: `src/store.ts` — refactor `searchDocuments` internals
@@ -138,10 +179,17 @@ Match against `node.path`; multiply final score.
 **Step:**
 1. Have each retrieval signal (BM25-exact, BM25-prefix, subtoken match, future semantic) produce its own ranked list of `{node_id, rank}`.
 2. Fuse via Reciprocal Rank Fusion: `score(d) = Σ weight_s · 1/(k + rank_s(d))`, default `k=60`.
-3. Apply Tier 1 multipliers (definition boost, noise penalty, file coherence) to the fused score.
+3. Apply Tier 1 multipliers (definition boost, noise penalty, file coherence) to the fused score, NOT to individual per-signal scores. Multipliers operate on whole-result ranking, not on individual retriever lists.
 4. Keep the public API of `searchDocuments` unchanged.
 
-**Tier 3 acceptance:** No regression on existing search-quality tests; pipeline cleanly accepts a new signal in Tier 4 with a one-line addition.
+### Task 3.2: Adaptive signal weighting (formerly Task 1.4)
+
+**Files:**
+- Modify: `src/store.ts` — detect query shape, scale per-signal RRF weights
+
+**Step:** When the query is symbol-shaped (heuristic from Task 1.4 step), bump `signal_weights["bm25_exact"]` and dampen `signal_weights["subtoken"]`. When natural-language, leave defaults. This is the Semble-style adaptive weighting in its proper home — between two ranked retrievers, not on a single BM25 stream.
+
+**Tier 3 acceptance:** No regression on existing search-quality tests after Task 3.1 (RRF should be ranking-equivalent to the current weighted sum given a single-signal pipeline). Task 3.2 ships with QRels covering both query shapes — symbol-shaped queries should improve precision@1, natural-language queries should not regress.
 
 ---
 
@@ -150,25 +198,33 @@ Match against `node.path`; multiply final score.
 This is the only tier that breaks "zero embeddings, no model files." Default install must remain dependency-free; embeddings opt-in via `SEMANTIC=1`.
 
 **Decision required before starting:**
-- Does our search-quality corpus show meaningful recall failures on natural-language queries after Tiers 1–3?
-- Are users willing to accept an ~16M-param ONNX weights file (~30MB)?
+- Does our search-quality corpus show meaningful recall failures on natural-language queries after Tiers 1–3? Run a measurement specifically on natural-language QRels (excluding `category: "exact"`) — that's the slice Tier 4 targets.
+- Are users willing to accept an ~30MB model-weights file (one-time download to `$XDG_CACHE_HOME/treenav-mcp/`, not bundled in the npm tarball)?
+- **Index-time budget:** measure embedding cost on a representative 5k-file corpus before committing. Semble's "~250ms index" is for small/medium repos; potion-code-16M token-lookup-and-mean-pool over thousands of nodes can reach tens of seconds. If index time exceeds 30s on 5k files, the "fast index" pitch is broken even with `SEMANTIC=1` — reconsider before shipping.
 
-If both answers are yes:
+If all three answers are favorable:
 
-### Task 4.1: ONNX Runtime integration
+### Task 4.1: Pure-TS Model2Vec runtime (preferred path)
+
+**Rationale:** Model2Vec inference is *literally* tokenize → per-token lookup in a fixed embedding table → mean-pool. No forward pass, no attention. A tensor execution engine (`onnxruntime-node`, ~50MB native binary, no Alpine/musl prebuilt, spotty Linux ARM64 prebuilts) is massive overkill for a hashmap lookup and a mean. Implementing it directly in TypeScript preserves the "no binary deps" install story and keeps the install footprint to just the model weights.
+
+`model2vec-rs` was considered and rejected: it ships only a Rust crate + CLI + experimental browser-WASM build. There are no Node/NAPI bindings, so using it from Bun would require either writing our own NAPI layer, shelling out to a CLI per query (latency unacceptable), or an unproven WASM-via-`bun:ffi` integration. All three are larger projects than just porting the inference loop.
 
 **Files:**
-- Add: `src/embeddings.ts` — model load + token-to-vector lookup + mean-pool
-- Modify: `package.json` — add `onnxruntime-node` as **optional** dependency
+- Add: `src/embeddings.ts` — tokenizer load + embedding-matrix `mmap` + lookup + mean-pool (~50–100 lines)
+- Add: `src/embeddings-loader.ts` — fetch + cache the weights file on first `SEMANTIC=1` run (HuggingFace Hub URL → `$XDG_CACHE_HOME/treenav-mcp/potion-code-16M/`)
 - Modify: `src/code-indexer.ts` and `src/indexer.ts` — embed leaf nodes when `SEMANTIC=1`
 - Modify: `src/store.ts` — store `Float32Array` per node; cosine over BM25 top-K candidates only (not full corpus) for tractable latency
 - Modify: `src/types.ts` — extend `RankingParams` with semantic config
+- Modify: `package.json` — **no new runtime dependency.** Tokenizer-only use of `@huggingface/transformers` (or a hand-rolled BPE if we can avoid even that) — measure install-size impact in PR 9 and pick the lighter option.
 
 **Step:**
-1. Use `potion-code-16M` (Model2Vec, static embeddings — no transformer inference at runtime, just token lookup + mean-pool). Fits the "no GPU, no API" claim.
-2. Index time: tokenize node text, look up vectors, mean-pool, store as `Float32Array(256)`.
+1. Load `potion-code-16M` weights (Model2Vec, static embeddings — no transformer inference at runtime, just token lookup + mean-pool). Fits the "no GPU, no API" claim. Read the embedding matrix into a single `Float32Array` backed by `mmap` where possible.
+2. Index time: tokenize node text → token IDs → gather rows from the embedding matrix → mean-pool → store as `Float32Array(256)` per node.
 3. Query time: embed query the same way, cosine-rank against BM25 top-K candidates (not the whole corpus — keeps latency in Semble's ballpark).
 4. Feed cosine-ranked list into the Tier 3 RRF fuser as a third signal.
+
+**Fallback (only if pure-TS path proves blocked):** add `onnxruntime-node` as an *optional* dependency and gate `SEMANTIC=1` behind it. Document the install-size and Alpine/ARM caveats clearly in the README. Do not pursue this unless step 1 above hits an unforeseen blocker — the pure-TS path is preferred specifically because it preserves the project's install story.
 
 ### Task 4.2: Documentation + benchmarks
 
@@ -176,26 +232,34 @@ If both answers are yes:
 - Modify: `README.md`, `CLAUDE.md` — document `SEMANTIC=1`, weights file location, install size impact
 - Add: `docs/benchmarks.md` — publish NDCG@10 with/without semantic, index time, query latency on the same corpora Semble uses if possible
 
-**Tier 4 acceptance:** Default install size + behavior unchanged. With `SEMANTIC=1`: NDCG@10 within 2 points of Semble on a comparable code corpus, query p95 < 50ms.
+**Tier 4 acceptance:** Default install size + behavior unchanged. With `SEMANTIC=1`:
+- Index time ≤ 5× the BM25-only index time on a 5k-file corpus.
+- Query p95 < 50ms.
+- NDCG@10 lift over Tier 3 ≥ 0.05 on natural-language QRels (the corpus we already control). Comparing to Semble's published 0.854 on their eval is informational only — different corpus, different ground truth, not a direct comparison.
 
 ---
 
 ## Sequencing & PR Plan
 
+Each PR ships isolated so before/after NDCG@10 deltas attribute cleanly. Bundling tasks (as the original PR 1 did) lets a regression in one mask a win in another.
+
 | PR | Scope | Deps | Risk |
 |----|-------|------|------|
-| 1 | Tier 1.1 + 1.3 + 1.5 (definition boost, noise, file coherence) | none | low |
-| 2 | Tier 1.2 (subtoken indexing) | PR 1 | low |
-| 3 | Tier 1.4 (adaptive lexical weighting) | PR 1 | low |
-| 4 | Tier 2.1 (snippet density tuning) | PR 1–3 | low |
-| 5 | Tier 3 (RRF refactor) | PR 1–4 | medium — touches scoring path |
-| 6 | Decision review: do we need Tier 4? | PR 5 + benchmarks | — |
-| 7 | Tier 4.1 + 4.2 (only if PR 6 says yes) | PR 5 | medium — new dep, install-size impact |
+| 0 | Lock decisions in "Decisions to lock before PR 1": add `symbol_kind`/`symbol_name` to `TreeNode`, move `noise_patterns` to `CollectionConfig`. Pure type/plumbing change with no scoring effect. | none | low |
+| 1 | Task 1.1 (definition boost) | PR 0 | low |
+| 2 | Task 1.3 (noise penalties + tightened `CODE_GLOB` defaults) | PR 0 | low |
+| 3 | Task 1.5 (file coherence — both file boost AND lead bonus) | PR 1 | low |
+| 4 | Task 1.2 (subtoken indexing with full_coverage_bonus precision) | PR 0–3 | medium — touches index + score |
+| 5 | Task 1.4 (query-shape-aware multipliers) | PR 1, 4 | low |
+| 6 | Task 2.1 (window-density ranking signal) | PR 0–5 | low |
+| 7 | Tier 3.1 + 3.2 (RRF refactor + adaptive weighting) | PR 0–6 | medium — refactors scoring path |
+| 8 | Decision review with corpus-scale benchmark: do we need Tier 4? | PR 7 + index-time measurement | — |
+| 9 | Tier 4.1 + 4.2 (only if PR 8 says yes) — pure-TS Model2Vec runtime, fallback to `onnxruntime-node` only if blocked | PR 7 | medium — model-weights download, index-time impact |
 
-PRs 1–4 should each include new QRels in `tests/search-quality.test.ts` to ground the win. PR 5 should ship with a before/after NDCG@10 table.
+Every code-change PR ships with new QRels and a before/after metric table specific to that PR's claim — no aggregate-only metrics, since they hide regressions.
 
 ## Open Questions
 
-- Should the noise-pattern list be configurable per collection (e.g. different patterns for the markdown wiki vs. the code root)?
-- For sub-symbol chunking, do we want fragments to participate in `get_tree` output for agents that explicitly ask for them?
-- Tier 4: prefer `onnxruntime-node` (binary deps) or a pure-JS Model2Vec runtime if one exists?
+- For sub-symbol chunking, do we want fragments to participate in `get_tree` output for agents that explicitly ask for them, or stay hidden behind a flag?
+- ~~Tier 4: prefer `onnxruntime-node` or a pure-JS Model2Vec runtime?~~ **Resolved (2026-05-04):** pure-TS Model2Vec runtime is the preferred path; `onnxruntime-node` is fallback-only. See Task 4.1 rationale. `model2vec-rs` was considered and rejected (no Node/NAPI bindings).
+- Should `definition_boost` and `subtoken_weight` be per-collection too, or is global enough? (Suggest global until a real corpus shows otherwise — don't speculate.)
