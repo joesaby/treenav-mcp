@@ -38,7 +38,10 @@ export function formatSearchResults(
   const summary = results
     .map((r, i) => {
       const badge = buildFacetBadge(r.facets);
-      return `${i + 1}. [${r.doc_id}] ${r.doc_title}\n   Section: ${r.node_title} (${r.node_id})\n   Score: ${r.score.toFixed(1)}${badge}\n   Snippet: ${r.snippet}`;
+      // RRF-fused scores live in ~[0, 0.05]; .toFixed(1) collapses every
+      // value to "0.0". Use 4 decimals so the score remains a useful
+      // ordering hint for the agent.
+      return `${i + 1}. [${r.doc_id}] ${r.doc_title}\n   Section: ${r.node_title} (${r.node_id})\n   Score: ${r.score.toFixed(4)}${badge}\n   Snippet: ${r.snippet}`;
     })
     .join("\n\n");
 
