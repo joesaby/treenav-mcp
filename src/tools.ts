@@ -447,7 +447,9 @@ export function registerTools(
       const formatted = results
         .map(
           (r, i) =>
-            `${i + 1}. ${r.node_title} [${r.node_id}]\n   File: ${r.file_path}\n   Score: ${r.score.toFixed(1)}\n   Signature: ${r.snippet}`
+            // RRF-fused scores live in ~[0, 0.05]; render 4 decimals so the
+            // ordering hint survives the new score scale.
+            `${i + 1}. ${r.node_title} [${r.node_id}]\n   File: ${r.file_path}\n   Score: ${r.score.toFixed(4)}\n   Signature: ${r.snippet}`
         )
         .join("\n\n");
 

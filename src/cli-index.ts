@@ -74,8 +74,10 @@ async function main() {
       console.log("  No results found.");
     } else {
       for (const r of results) {
+        // RRF-fused scores live in ~[0, 0.05] — keep 4 decimals so values
+        // remain visible in CLI output.
         console.log(
-          `  ${r.score.toFixed(1)} │ [${r.doc_id}] ${r.node_title}`
+          `  ${r.score.toFixed(4)} │ [${r.doc_id}] ${r.node_title}`
         );
         console.log(`       ${r.snippet.slice(0, 100)}`);
         console.log();
