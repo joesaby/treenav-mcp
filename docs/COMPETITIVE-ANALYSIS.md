@@ -352,6 +352,250 @@ limit" gets hits from your runbook docs, your API reference, and your
 
 ---
 
+### 8. mcp-server-filesystem — The "Do Nothing" Baseline
+
+**Repo:** [modelcontextprotocol/servers — `src/filesystem`](https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem)
+(official Anthropic reference server)
+
+The official filesystem MCP server is what an agent gets when no retrieval
+layer is installed at all. It exposes file-level primitives —
+`read_text_file`, `read_multiple_files`, `list_directory`, `directory_tree`,
+`search_files` (glob-only filename matching), plus write operations like
+`edit_file` and `write_file`. There is no inverted index, no BM25 ranking,
+no AST, no heading extraction. The agent must know the path it wants, or
+walk the directory tree and read files speculatively to find content.
+
+**vs treenav:**
+
+- **Indexing model.** Filesystem MCP has none. treenav builds a positional
+  inverted index plus a heading/symbol tree at startup.
+- **Query model.** Filesystem MCP offers glob filename matching (`*.md`,
+  `auth/**/*.ts`) and full-file reads. treenav offers BM25 keyword search,
+  literal/regex grep over the indexed content, faceted filtering, and
+  section-precise retrieval via `get_node_content`.
+- **Embeddings.** Neither uses them.
+- **Code/docs scope.** Filesystem MCP is content-agnostic — bytes are bytes.
+  treenav understands markdown headings, source-code symbols (class,
+  function, interface, etc.), and CSV/JSONL row keys.
+- **MCP support.** Both are MCP servers. Filesystem MCP also exposes write
+  tools by default; treenav's write surface is opt-in (`WIKI_WRITE=1`).
+- **Library use.** Filesystem MCP is server-only. treenav is also importable
+  as a TypeScript library.
+- **Latency.** Comparable for any single operation — both are local I/O.
+  The difference shows up over a workflow: filesystem MCP forces the agent
+  to read whole files (or guess), so a 10-call session burns far more tokens
+  pulling unrelated content into context.
+- **Install footprint.** Filesystem MCP is the lightest possible option
+  (Node + the reference server). treenav requires Bun ≥ 1.3.8 and two npm
+  dependencies (`@modelcontextprotocol/sdk`, `zod`).
+
+**When to pick which.** Filesystem MCP is correct when an agent needs to
+manipulate files by path — create, rename, edit by line range — and the
+corpus is small enough that targeted reads don't waste context. treenav is
+correct when the agent needs to *find* content by meaning rather than path,
+or when retrieval precision matters across hundreds of files.
+
+---
+
+### 9. mcp-ripgrep / mcp-grep — Fast, Structureless Search
+
+**Repos:** [mcollina/mcp-ripgrep](https://github.com/mcollina/mcp-ripgrep),
+[247arjun/mcp-grep](https://github.com/247arjun/mcp-grep), and several
+similar wrappers.
+
+These servers expose the local `grep` or `ripgrep` binary as MCP tools
+(`grep_files`, pattern + path + regex flags). Output mirrors `rg -n`:
+a list of `path:line:matched-text` entries. There is no scoring, no
+relevance ranking, no document or symbol model — every match is equally
+weighted, returned in file order.
+
+**vs treenav:**
+
+- **Indexing model.** ripgrep wrappers have none — every query re-scans
+  the filesystem. treenav indexes once at startup and holds a positional
+  inverted index in memory.
+- **Query model.** ripgrep wrappers offer literal and regex matching.
+  treenav offers literal/regex grep (`grep_documents` — the same shape as
+  `rg -n`) *and* BM25 ranked search on the same indexed content. Use grep
+  when you know the exact symbol, error string, or CLI flag; use BM25
+  when you want stemming, glossary expansion, and relevance ranking.
+- **Embeddings.** Neither uses them.
+- **Code/docs scope.** ripgrep wrappers treat all files as text and have
+  no symbol/heading model. treenav builds heading trees for markdown,
+  symbol trees for source code, and exposes both via `get_tree`,
+  `find_symbol`, and `navigate_tree`.
+- **MCP support.** Both are MCP servers.
+- **Library use.** ripgrep wrappers are typically server-only.
+  treenav is also importable as a library.
+- **Latency.** ripgrep is famously fast on the cold filesystem; on a
+  warmed-up cache, treenav's in-memory positional index returns ranked
+  hits with snippets in 5-30ms without re-reading any file.
+- **Install footprint.** ripgrep wrappers add ripgrep itself as an
+  external dependency. treenav has two npm dependencies and a Bun runtime.
+
+**When to pick which.** ripgrep MCP is the right tool when you want
+literal-only matching, no index warm-up, and you're happy with file-order
+results. treenav is the right tool when relevance ranking, structural
+navigation, or unified docs+code search matter — and when you also want
+literal grep available in the same server, treenav already includes it.
+
+---
+
+### 10. Sourcegraph Cody — The Industrial RAG Comparison
+
+**Repo / product:** [Sourcegraph Cody](https://sourcegraph.com/cody),
+[Cody docs](https://sourcegraph.com/docs/cody)
+
+Cody is Sourcegraph's enterprise AI coding assistant. It pairs a hosted
+or self-hosted Sourcegraph instance (the indexer + search backend) with
+LLM-powered chat and edit. Historically Cody used vector embeddings for
+context retrieval; Cody Enterprise has now [retired embeddings in favor
+of Sourcegraph's classic Search API](https://sourcegraph.com/docs/cody/faq).
+Cody supports cloud, self-hosted, and air-gapped deployments, and can
+itself [call MCP servers](https://sourcegraph.com/changelog/mcp-context-gathering)
+during agentic context gathering.
+
+**vs treenav:**
+
+- **Indexing model.** Cody relies on Sourcegraph's indexer, which builds
+  a multi-repo code search index plus (optionally) embeddings. treenav
+  builds an in-memory positional inverted index plus a heading/symbol
+  tree, scoped to one configured root.
+- **Query model.** Cody's pipeline mixes Sourcegraph's structural code
+  search (regex, structural, lang-aware), embedding similarity (where
+  enabled), LLM rewriting, and re-ranking. treenav uses BM25 + glossary
+  expansion + facet filters, deterministically.
+- **Embeddings.** Cody supports them on non-Enterprise tiers. treenav
+  performs zero embedding work and downloads no models.
+- **Code/docs scope.** Cody is code-first across many repos; docs come
+  in via OpenCtx adapters or external systems. treenav is single-corpus
+  (one tree), spanning markdown docs, source code, and CSV/JSONL in the
+  same index.
+- **MCP support.** Cody can act as an *MCP client* (it calls MCP servers
+  including, in principle, treenav). It is not itself an MCP server.
+- **Library use.** Cody is a product, not a library. treenav is both an
+  MCP server and a TypeScript library.
+- **Latency.** treenav is local and returns hits in 5-30ms. Cody's
+  pipeline involves Sourcegraph backend search plus LLM inference; the
+  per-call latency is dominated by the model.
+- **Install footprint.** Cody requires a Sourcegraph deployment
+  (cloud, self-hosted, or air-gapped) and a Cody license for enterprise
+  features. treenav requires Bun and two npm dependencies.
+
+**When to pick which.** Cody is the right answer for a multi-repo
+enterprise that already wants the editor-integrated chat-and-edit flow,
+SOC 2 / ISO 27001 procurement story, and is willing to operate a
+Sourcegraph backend. treenav is the right answer for a single-repo or
+single-corpus retrieval layer that should be fast, deterministic, and
+free of model downloads — including, plausibly, as a local MCP tool that
+Cody itself calls.
+
+---
+
+### 11. Aider's Repo Map — Token-Budget Codebase Summarization
+
+**Reference:** [aider.chat — Repository map](https://aider.chat/docs/repomap.html),
+[Building a better repo map with tree-sitter](https://aider.chat/2023/10/22/repomap.html)
+
+Aider's repo map is not an MCP server — it is a feature inside the
+[Aider](https://aider.chat) coding assistant. At each turn, Aider parses
+the project with tree-sitter, builds a graph of symbol definitions and
+references, runs personalized PageRank seeded with the files currently
+in the chat (and any identifiers the user mentioned), then renders the
+top-ranked definitions as elided "skeleton" code that fits inside a
+token budget (default ~1k tokens via `--map-tokens`). The output is a
+compact, ranked outline of the codebase that gets prepended to the prompt.
+
+**vs treenav:**
+
+- **Indexing model.** Both parse code into a symbol graph. Aider ranks
+  symbols by PageRank against the live conversation context and re-ranks
+  every turn. treenav indexes symbols once and ranks per-query via BM25
+  against the user's keywords.
+- **Query model.** Aider has no user-facing query — the "query" is
+  implicit in what's open in chat. treenav exposes explicit
+  `search_documents`, `find_symbol`, and `grep_documents` calls.
+- **Embeddings.** Neither uses them.
+- **Code/docs scope.** Aider's repo map is code-only. treenav covers
+  markdown docs, source code, and structured data in one index.
+- **MCP support.** Aider is a standalone agent, not an MCP server.
+  Treenav is an MCP server (and a library).
+- **Library use.** Aider's repo map logic has been ported into
+  third-party libraries and MCP wrappers
+  ([RepoMapper](https://github.com/pdavis68/RepoMapper),
+  [repomap-mcp](https://lobehub.com/mcp/fl0w1nd-repomap-mcp)) but the
+  upstream is part of Aider itself. treenav is published as an
+  importable TypeScript library.
+- **Latency.** Aider rebuilds the map every turn; the cost scales with
+  graph size and PageRank iterations. treenav's per-query latency
+  (5-30ms) is independent of corpus changes between queries.
+- **Install footprint.** Aider pulls in tree-sitter for many languages,
+  scipy/networkx for PageRank, and the rest of the Aider toolchain.
+  treenav uses regex/indent-based parsers and has two npm dependencies.
+
+**When to pick which.** Aider's repo map is the right design when the
+goal is *prompt construction* — give the model a budgeted, conversation-
+aware overview of the whole codebase before it asks a question. treenav
+is the right design when the goal is *agentic retrieval* — let the agent
+ask explicit questions ("find handlers that touch the rate limiter"),
+get ranked answers with snippets, and pull only the sections it needs.
+The two are complementary: an agent could feed an Aider-style overview
+once, then use treenav for follow-up retrieval.
+
+---
+
+### 12. LlamaIndex TreeIndex — Tree Navigation in a Different Stack
+
+**Reference:** [LlamaIndex Tree index API](https://docs.llamaindex.ai/en/stable/api_reference/indices/tree/),
+[How each index works](https://docs.llamaindex.ai/en/stable/module_guides/indexing/index_guide/)
+
+LlamaIndex's TreeIndex is one of the original tree-shaped retrieval
+indexes. At index time it chunks the corpus, then recursively asks an
+LLM to summarize children into parents until a single root remains.
+At query time it traverses from the root downward, choosing one child
+per level (`child_branch_factor=1`) or a fixed-width fan-out, with the
+LLM picking the next branch. It is a Python library (LlamaIndex), not
+an MCP server.
+
+**vs treenav:**
+
+- **Indexing model.** TreeIndex builds a *summarization* tree where
+  every parent node is an LLM-generated summary of its children.
+  treenav uses the *structural* tree that already exists in the
+  corpus — markdown headings and code symbols — and computes no
+  summaries. No LLM calls at any stage.
+- **Query model.** TreeIndex routes by asking the LLM to pick the most
+  relevant child at each level, descending until it hits a leaf.
+  treenav routes by BM25 score: the agent (or a downstream LLM) sees a
+  ranked outline and decides what to expand via `get_node_content`.
+- **Embeddings.** TreeIndex doesn't require them but pairs with them
+  in the broader LlamaIndex toolkit. treenav uses none.
+- **Code/docs scope.** TreeIndex is corpus-agnostic but optimized for
+  text documents. treenav covers markdown, code, and structured data.
+- **MCP support.** TreeIndex has none — it is a Python library called
+  inside an application. treenav is an MCP server *and* a library.
+- **Library use.** Both are usable as libraries; LlamaIndex is Python,
+  treenav is TypeScript.
+- **Latency.** TreeIndex traversal cost is dominated by LLM calls per
+  level (one model call per descent step). treenav navigation is local
+  data-structure traversal in microseconds; the BM25 query that seeds
+  it is 5-30ms.
+- **Install footprint.** LlamaIndex is a large Python toolkit with many
+  optional sub-packages. treenav has two npm dependencies and one Bun
+  runtime.
+
+**When to pick which.** TreeIndex is the right choice when summarization
+*is* the value — you want the LLM to compose a hierarchical answer from
+many leaves, and you accept LLM cost at both index and query time.
+treenav is the right choice when the corpus already has structure
+(headings, classes, functions), and the goal is to let the agent
+*navigate* that structure cheaply rather than have an LLM re-derive it.
+TreeIndex is the philosophical predecessor to the tree-navigation idea
+in a heavier, LLM-driven stack; treenav is what falls out when you keep
+the tree-navigation insight and remove the LLM from indexing and routing.
+
+---
+
 ## Positioning
 
 treenav-mcp occupies a specific niche: **structured local-first navigation
