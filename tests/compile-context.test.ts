@@ -653,3 +653,14 @@ describe("compileContext (top-level)", () => {
     expect(stripTiming(t1)).toBe(stripTiming(t2));
   });
 });
+
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { registerTools } from "../src/tools";
+
+describe("compile_context MCP tool registration", () => {
+  test("registers compile_context alongside existing tools without errors", () => {
+    const store = makeStoreWithFixtures();
+    const server = new McpServer({ name: "test", version: "0.0.0" });
+    expect(() => registerTools(server, store)).not.toThrow();
+  });
+});

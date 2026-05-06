@@ -208,6 +208,7 @@ describe("MCP tool discovery", () => {
 
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual([
+      "compile_context",
       "find_symbol",
       "get_node_content",
       "get_tree",
