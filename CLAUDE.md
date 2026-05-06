@@ -15,15 +15,13 @@ src/
 │   ├── python.ts     # Python indentation-based symbol extraction
 │   └── generic.ts    # Fallback for Go, Rust, Java, C, Ruby, etc.
 ├── store.ts          # In-memory BM25 + grep engine, facets, glossary, row index
-├── curator.ts        # Opt-in write-side curation (find_similar, draft, write)
 ├── types.ts          # All TypeScript interfaces and ranking defaults
-├── tools.ts          # Shared MCP tool registration (read tools + optional curation)
-├── prompts.ts        # MCP prompts for doc-read / doc-write / doc-lint workflows
-├── server.ts         # MCP stdio server (8 read tools + optional 3 curation tools)
+├── tools.ts          # Shared MCP tool registration
+├── prompts.ts        # MCP prompts for doc-read / doc-grep workflows
+├── server.ts         # MCP stdio server (8 read tools)
 ├── server-http.ts    # MCP HTTP/Streamable HTTP server variant
 ├── cli-index.ts      # CLI debugging tool for inspecting indexed output
-├── cli-init.ts       # `bunx treenav init` — wires up host config + skills
-└── cli-lint.ts       # `bunx treenav lint` — checks wiki frontmatter / paths
+└── cli-init.ts       # `bunx treenav init` — wires up host MCP config
 ```
 
 ### Key Design Decisions
@@ -80,10 +78,6 @@ A GitHub Release is created automatically with generated release notes. Docker H
 | `CODE_COLLECTION` | `code` | Name for the code collection |
 | `CODE_WEIGHT` | `1.0` | BM25 weight multiplier for code results |
 | `CODE_GLOB` | all supported extensions | Glob pattern for code files |
-| `WIKI_WRITE` | *(unset)* | Set to `1` to enable the write-side curation toolset (find_similar, draft_wiki_entry, write_wiki_entry). Off by default. |
-| `WIKI_ROOT` | `$DOCS_ROOT` | Filesystem root that curated entries must live under. Writes outside this path are rejected. |
-| `WIKI_DUPLICATE_THRESHOLD` | `0.35` | Overlap ratio above which writes warn and require `allow_duplicate=true`. |
-| `LINT_MIN_WORDS` | `100` | `treenav lint` flags any wiki entry below this word count as a stub. |
 
 ### Glossary File Format
 
@@ -101,8 +95,6 @@ This enables bidirectional query expansion: searching "CLI" also matches "comman
 
 ## MCP Tools
 
-Read tools (always available):
-
 1. **`list_documents`** — Browse catalog with tag/keyword filtering, returns facet counts
 2. **`search_documents`** — BM25 keyword search with facet filters and glossary expansion
 3. **`grep_documents`** — Literal or regex match across indexed content (the `grep -n` of the index). Use when you know the exact symbol/error/CLI flag and don't want stemming or glossary expansion.
@@ -112,20 +104,9 @@ Read tools (always available):
 7. **`lookup_row`** — O(1) key→row lookup for indexed CSV/JSONL data (e.g. `PROJ-44`, `ITEM-1234`)
 8. **`find_symbol`** — Search code symbols by name, kind (`class`/`function`/`interface`/etc.), and language (requires `CODE_ROOT`)
 
-Curation tools (only when `WIKI_WRITE=1`):
+### CLI Wrapper
 
-9.  **`find_similar`** — BM25 dedupe check for prospective content
-10. **`draft_wiki_entry`** — Structural scaffold for a new entry (no write)
-11. **`write_wiki_entry`** — Validated write + incremental re-index
-
-### CLI Wrappers
-
-The package also exposes two CLI subcommands (run via `bunx treenav …` or via the published bin):
-
-- `treenav init` — interactive wiring of host MCP config (Claude Code, Claude Desktop, Cursor, OpenCode, Codex), plus per-host skill / hook installation
-- `treenav lint` — checks wiki frontmatter, path containment, and reserved-key violations
-
-The curation toolset lets a calling agent author new wiki entries while treenav enforces path containment, frontmatter schema, and duplicate thresholds. All LLM work stays in the calling agent — treenav itself performs zero LLM calls. See [docs/adr/0001-llm-curated-wiki.md](docs/adr/0001-llm-curated-wiki.md) and [docs/wiki-curation-spec.md](docs/wiki-curation-spec.md).
+`treenav init` — interactive wiring of host MCP config (Claude Code, Claude Desktop, Cursor, OpenCode, Codex). Run via `bunx treenav init` or via the published bin.
 
 ## Code Conventions
 
@@ -133,7 +114,7 @@ The curation toolset lets a calling agent author new wiki entries while treenav 
 - No classes in indexer (functional), class-based store (`DocumentStore`)
 - Bun test runner (`bun test`) with `.test.ts` files in `tests/`
 - Comments reference design influences: PageIndex, Pagefind, Bun.markdown
-- Reserved frontmatter keys (not used as facets): title, description, layout, permalink, slug, draft, date, source_url, source_title, captured_at, curator
+- Reserved frontmatter keys (not used as facets): title, description, layout, permalink, slug, draft, date, source_url, source_title, captured_at
 
 ## Frontmatter Best Practices for Indexed Docs
 

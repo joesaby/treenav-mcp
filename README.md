@@ -103,15 +103,12 @@ DOCS_ROOT=./docs bun run serve:http                  # HTTP (port 3100)
 |------|-------------|
 | `list_documents` | Browse catalog with tag/keyword filtering and facet counts |
 | `search_documents` | BM25 keyword search with facet filters and glossary expansion |
+| `grep_documents` | Literal/regex match across indexed content — the `grep -n` of the index |
 | `get_tree` | Hierarchical outline — structure and word counts, no content |
 | `get_node_content` | Retrieve full text of specific sections by node ID |
 | `navigate_tree` | Get a section and all its descendants in one call |
+| `lookup_row` | O(1) key→row lookup for indexed CSV/JSONL data |
 | `find_symbol` | Search code symbols by name, kind, and language (requires `CODE_ROOT`) |
-| `find_similar` | BM25 dedupe check for prospective content (requires `WIKI_WRITE=1`) |
-| `draft_wiki_entry` | Scaffold frontmatter + backlinks for a new entry (requires `WIKI_WRITE=1`) |
-| `write_wiki_entry` | Validated write + incremental re-index (requires `WIKI_WRITE=1`) |
-
-The last three are the **opt-in wiki curation toolset**. When `WIKI_WRITE=1` is set, an agent can safely author new entries — treenav enforces path containment, frontmatter schema, and duplicate thresholds. All LLM work stays in the calling agent; treenav itself performs zero LLM calls. See [docs/adr/0001-llm-curated-wiki.md](docs/adr/0001-llm-curated-wiki.md) for the design rationale and [docs/wiki-curation-spec.md](docs/wiki-curation-spec.md) for the tool contracts.
 
 ## Supported Languages
 

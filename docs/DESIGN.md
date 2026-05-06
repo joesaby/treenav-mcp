@@ -389,9 +389,7 @@ search layer of this project.
    match without stemming), `get_tree`, `get_node_content`, `navigate_tree`
    (all work on docs, code, and structured rows), plus `find_symbol` for
    code-specific filtering by symbol kind and language, and `lookup_row`
-   for O(1) key→row retrieval against indexed CSV/JSONL data. An optional
-   3-tool curation surface (`find_similar`, `draft_wiki_entry`,
-   `write_wiki_entry`) is registered when `WIKI_WRITE=1`.
+   for O(1) key→row retrieval against indexed CSV/JSONL data.
 
 ---
 
