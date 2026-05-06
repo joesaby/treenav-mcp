@@ -13,6 +13,7 @@ import type {
   ResolvedSource,
   CompileContextOutline,
   CompileContextOutlineNode,
+  CompileContextFullContent,
 } from "./types";
 import type { DocumentStore } from "./store";
 
@@ -192,4 +193,29 @@ export function collectOutlines(
     if (outlines.length >= topN) break;
   }
   return outlines;
+}
+
+/**
+ * Collect full node content for the top-N hits in arrival order.
+ */
+export function collectFullContent(
+  store: DocumentStore,
+  hits: CompileContextHit[],
+  topN: number
+): CompileContextFullContent[] {
+  if (topN <= 0) return [];
+  const blocks: CompileContextFullContent[] = [];
+  for (const h of hits) {
+    if (blocks.length >= topN) break;
+    const result = store.getNodeContent(h.doc_id, [h.node_id]);
+    if (!result || result.nodes.length === 0) continue;
+    const node = result.nodes[0];
+    blocks.push({
+      doc_id: h.doc_id,
+      node_id: node.node_id,
+      node_title: node.title,
+      content: node.content,
+    });
+  }
+  return blocks;
 }

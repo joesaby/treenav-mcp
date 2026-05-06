@@ -404,3 +404,22 @@ describe("collectOutlines", () => {
     expect(outlines.length).toBe(1);
   });
 });
+
+import { collectFullContent } from "../src/compile-context";
+
+describe("collectFullContent", () => {
+  test("returns full content for top N hits", () => {
+    const store = makeStoreWithFixtures();
+    const hits = dispatchSearch(store, "token rotation", "docs", undefined, 3);
+    const blocks = collectFullContent(store, hits, 2);
+    expect(blocks.length).toBeLessThanOrEqual(2);
+    expect(blocks.every((b) => typeof b.content === "string")).toBe(true);
+    expect(blocks.every((b) => b.content.length > 0)).toBe(true);
+  });
+
+  test("returns empty when topN is 0", () => {
+    const store = makeStoreWithFixtures();
+    const hits = dispatchSearch(store, "token rotation", "docs", undefined, 3);
+    expect(collectFullContent(store, hits, 0)).toEqual([]);
+  });
+});
