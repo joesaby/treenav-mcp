@@ -219,3 +219,92 @@ export function collectFullContent(
   }
   return blocks;
 }
+
+import type { CompileContextResult } from "./types";
+
+const SOURCE_ORDER: ResolvedSource[] = ["docs", "code", "rows"];
+
+function formatHitsBlock(
+  source: ResolvedSource,
+  hits: CompileContextHit[],
+  total: number
+): string {
+  const heading = `## Hits — ${source} (${hits.length} of ${total})`;
+  if (hits.length === 0) return heading;
+  const lines = hits.map((h, i) => {
+    const head = `${i + 1}. [${h.doc_id} → ${h.node_id}] ${h.doc_title} › ${h.node_title}  (score ${h.score.toFixed(4)})`;
+    const path = h.line_no
+      ? `   ${h.file_path}:${h.line_no}`
+      : `   ${h.file_path}`;
+    const tail = h.signature
+      ? `   Signature: ${h.signature}`
+      : h.snippet
+        ? `   Snippet: ${h.snippet}`
+        : "";
+    return [head, path, tail].filter(Boolean).join("\n");
+  });
+  return `${heading}\n${lines.join("\n\n")}`;
+}
+
+function formatOutlinesBlock(result: CompileContextResult): string {
+  if (result.outlines.length === 0) return "";
+  const blocks = result.outlines.map((o) => {
+    const heading = `▸ ${o.doc_id} — ${o.doc_title}`;
+    const nodeLines = o.nodes
+      .map((n) => {
+        const indent = "  ".repeat(Math.max(0, n.level - 1));
+        const summary = n.summary
+          ? `\n${indent}    Summary: ${n.summary.slice(0, 120)}…`
+          : "";
+        return `${indent}  [${n.node_id}] ${"#".repeat(n.level)} ${n.title} (${n.word_count} words)${summary}`;
+      })
+      .join("\n");
+    return `${heading}\n${nodeLines}`;
+  });
+  return `## Outlines (top ${result.outlines.length})\n\n${blocks.join("\n\n")}`;
+}
+
+function formatFullContentBlock(result: CompileContextResult): string {
+  if (result.full_content.length === 0) return "";
+  const blocks = result.full_content.map((b) => {
+    return `▸ [${b.doc_id} → ${b.node_id}] ${b.node_title}\n  ${b.content}`;
+  });
+  return `## Full content (top ${result.full_content.length})\n\n${blocks.join("\n\n")}`;
+}
+
+function formatBudgetBlock(result: CompileContextResult): string {
+  const notes = result.trim_notes.length > 0
+    ? `  (${result.trim_notes.join("; ")})`
+    : "";
+  return `## Budget\ntokens_used=${result.tokens_used_estimate} / ${result.tokens_budget}${notes}`;
+}
+
+function formatFollowUp(): string {
+  return [
+    "## Follow-up",
+    `- Read full content: get_node_content("<doc_id>", ["<node_id>"])`,
+    `- Drill into a subtree: navigate_tree("<doc_id>", "<node_id>")`,
+    `- Exact-match recheck: grep_documents("<intent>")`,
+  ].join("\n");
+}
+
+/**
+ * Render a CompileContextResult as the canonical text artifact.
+ * Section order is fixed; provenance brackets are mandatory on every hit.
+ */
+export function formatResult(result: CompileContextResult): string {
+  const header = `━━━ compile_context: "${result.intent}" (mode=${result.resolved_mode}, sources=[${result.sources.join(", ")}], ${result.duration_ms} ms) ━━━`;
+
+  const hitsBlocks = SOURCE_ORDER
+    .map((s) => formatHitsBlock(s, result.hits_by_source[s], result.hit_totals_by_source[s]))
+    .join("\n\n");
+
+  const outlines = formatOutlinesBlock(result);
+  const fullContent = formatFullContentBlock(result);
+  const budget = formatBudgetBlock(result);
+  const followUp = formatFollowUp();
+
+  return [header, hitsBlocks, outlines, fullContent, budget, followUp]
+    .filter((s) => s.length > 0)
+    .join("\n\n");
+}

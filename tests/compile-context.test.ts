@@ -423,3 +423,104 @@ describe("collectFullContent", () => {
     expect(collectFullContent(store, hits, 0)).toEqual([]);
   });
 });
+
+import { formatResult } from "../src/compile-context";
+
+function makeMinimalResult(): CompileContextResult {
+  return {
+    intent: "token rotation",
+    resolved_mode: "search",
+    sources: ["docs", "code"],
+    duration_ms: 7,
+    hits_by_source: {
+      docs: [
+        {
+          source: "docs",
+          doc_id: "auth-runbook",
+          node_id: "n1",
+          doc_title: "Auth Runbook",
+          node_title: "Token Rotation",
+          file_path: "auth/runbook.md",
+          score: 0.0421,
+          snippet: "Rotate the JWT signing key, then redeploy.",
+        },
+      ],
+      code: [
+        {
+          source: "code",
+          doc_id: "auth-service",
+          node_id: "c1",
+          doc_title: "AuthService",
+          node_title: "rotateToken",
+          file_path: "src/AuthService.ts",
+          score: 0.0387,
+          signature: "rotateToken() { return this.signer.rotate(); }",
+        },
+      ],
+      rows: [],
+    },
+    hit_totals_by_source: { docs: 1, code: 1, rows: 0 },
+    outlines: [],
+    full_content: [],
+    trim_notes: [],
+    tokens_used_estimate: 100,
+    tokens_budget: 2000,
+  };
+}
+
+describe("formatResult", () => {
+  test("emits header with mode + sources + timing", () => {
+    const text = formatResult(makeMinimalResult());
+    expect(text).toMatch(/compile_context: "token rotation"/);
+    expect(text).toMatch(/mode=search/);
+    expect(text).toMatch(/sources=\[docs, code\]/);
+  });
+
+  test("emits source partition headers in fixed order: docs, code, rows", () => {
+    const text = formatResult(makeMinimalResult());
+    const docsIdx = text.indexOf("## Hits — docs");
+    const codeIdx = text.indexOf("## Hits — code");
+    const rowsIdx = text.indexOf("## Hits — rows");
+    expect(docsIdx).toBeGreaterThan(-1);
+    expect(codeIdx).toBeGreaterThan(docsIdx);
+    expect(rowsIdx).toBeGreaterThan(codeIdx);
+  });
+
+  test("every hit carries provenance brackets", () => {
+    const text = formatResult(makeMinimalResult());
+    expect(text).toMatch(/\[auth-runbook → n1\]/);
+    expect(text).toMatch(/\[auth-service → c1\]/);
+  });
+
+  test("emits Budget section", () => {
+    const text = formatResult(makeMinimalResult());
+    expect(text).toMatch(/## Budget/);
+    expect(text).toMatch(/tokens_used=100 \/ 2000/);
+  });
+
+  test("emits Follow-up section", () => {
+    const text = formatResult(makeMinimalResult());
+    expect(text).toMatch(/## Follow-up/);
+    expect(text).toMatch(/get_node_content/);
+  });
+
+  test("empty source emits header with (0 of 0)", () => {
+    const text = formatResult(makeMinimalResult());
+    expect(text).toMatch(/## Hits — rows \(0 of 0\)/);
+  });
+
+  test("Full content section omitted when empty", () => {
+    const text = formatResult(makeMinimalResult());
+    expect(text).not.toMatch(/## Full content/);
+  });
+
+  test("Full content section emitted when blocks present", () => {
+    const r = makeMinimalResult();
+    r.full_content = [
+      { doc_id: "auth-runbook", node_id: "n1", node_title: "Token Rotation", content: "Rotate the key." },
+    ];
+    const text = formatResult(r);
+    expect(text).toMatch(/## Full content/);
+    expect(text).toMatch(/\[auth-runbook → n1\]/);
+  });
+});
