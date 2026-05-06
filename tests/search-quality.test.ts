@@ -1,7 +1,7 @@
 /**
  * Search & Navigation Quality Test Suite
  *
- * Evaluates treenav-mcp's BM25 search and tree navigation quality against a
+ * Evaluates treenav's BM25 search and tree navigation quality against a
  * curated corpus using standard IR metrics.
  *
  * Metrics (per docs/search-quality-spec.md):

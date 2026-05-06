@@ -57,7 +57,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            joesaby/treenav-mcp:latest
-            joesaby/treenav-mcp:${{ env.NEW_RELEASE_VERSION }}
+            joesaby/treenav:latest
+            joesaby/treenav:${{ env.NEW_RELEASE_VERSION }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

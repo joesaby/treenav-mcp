@@ -1,8 +1,8 @@
-# CLAUDE.md — treenav-mcp
+# CLAUDE.md — treenav
 
 ## Project Overview
 
-treenav-mcp is an MCP (Model Context Protocol) server that provides BM25 search, literal/regex grep, and hierarchical tree navigation over markdown documentation, source code, and structured data (CSV/JSONL). Agents get a table of contents they can reason over — for docs, code, and tabular data — then retrieve only the sections, symbols, or rows they need. Supports AST-based code navigation for TypeScript, Python, Go, Rust, Java, C/C++, and more. No vector DB, no embeddings, no LLM calls at index or retrieval time.
+treenav is an MCP (Model Context Protocol) server that provides BM25 search, literal/regex grep, and hierarchical tree navigation over markdown documentation, source code, and structured data (CSV/JSONL). Agents get a table of contents they can reason over — for docs, code, and tabular data — then retrieve only the sections, symbols, or rows they need. Supports AST-based code navigation for TypeScript, Python, Go, Rust, Java, C/C++, and more. No vector DB, no embeddings, no LLM calls at index or retrieval time.
 
 ## Architecture
 
@@ -22,8 +22,8 @@ src/
 ├── server.ts         # MCP stdio server (8 read tools + optional 3 curation tools)
 ├── server-http.ts    # MCP HTTP/Streamable HTTP server variant
 ├── cli-index.ts      # CLI debugging tool for inspecting indexed output
-├── cli-init.ts       # `bunx treenav-mcp init` — wires up host config + skills
-└── cli-lint.ts       # `bunx treenav-mcp lint` — checks wiki frontmatter / paths
+├── cli-init.ts       # `bunx treenav init` — wires up host config + skills
+└── cli-lint.ts       # `bunx treenav lint` — checks wiki frontmatter / paths
 ```
 
 ### Key Design Decisions
@@ -119,10 +119,10 @@ Curation tools (only when `WIKI_WRITE=1`):
 
 ### CLI Wrappers
 
-The package also exposes two CLI subcommands (run via `bunx treenav-mcp …` or via the published bin):
+The package also exposes two CLI subcommands (run via `bunx treenav …` or via the published bin):
 
-- `treenav-mcp init` — interactive wiring of host MCP config (Claude Code, Claude Desktop, Cursor, OpenCode, Codex), plus per-host skill / hook installation
-- `treenav-mcp lint` — checks wiki frontmatter, path containment, and reserved-key violations
+- `treenav init` — interactive wiring of host MCP config (Claude Code, Claude Desktop, Cursor, OpenCode, Codex), plus per-host skill / hook installation
+- `treenav lint` — checks wiki frontmatter, path containment, and reserved-key violations
 
 The curation toolset lets a calling agent author new wiki entries while treenav enforces path containment, frontmatter schema, and duplicate thresholds. All LLM work stays in the calling agent — treenav itself performs zero LLM calls. See [docs/adr/0001-llm-curated-wiki.md](docs/adr/0001-llm-curated-wiki.md) and [docs/wiki-curation-spec.md](docs/wiki-curation-spec.md).
 

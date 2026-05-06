@@ -3,7 +3,7 @@
  *
  * Extracts structural symbols from TS/JS source files using regex patterns.
  * Maps classes, interfaces, functions, types, and enums into a hierarchy
- * compatible with treenav-mcp's TreeNode model.
+ * compatible with treenav's TreeNode model.
  *
  * No external dependencies — pure regex extraction for zero-overhead indexing.
  */

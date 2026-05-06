@@ -1,5 +1,5 @@
 {
-  "name": "treenav-mcp",
+  "name": "treenav",
   "build": {
     "dockerfile": "Dockerfile",
     "context": ".."

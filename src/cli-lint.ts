@@ -3,7 +3,7 @@
  * Called by AI tool hooks after write_wiki_entry.
  *
  * Usage:
- *   bunx treenav-mcp-lint
+ *   bunx treenav-lint
  *
  * Env vars:
  *   WIKI_ROOT       — directory to scan (default: ./docs/wiki, fallback: DOCS_ROOT)
@@ -153,11 +153,11 @@ export async function main() {
     issues.brokenLinks.length;
 
   if (totalIssues === 0) {
-    console.log("treenav-mcp lint: all clear");
+    console.log("treenav lint: all clear");
     process.exit(0);
   }
 
-  console.log(`treenav-mcp lint: ${totalIssues} issues found\n`);
+  console.log(`treenav lint: ${totalIssues} issues found\n`);
 
   if (issues.missingFrontmatter.length > 0) {
     console.log(`MISSING FRONTMATTER (${issues.missingFrontmatter.length}):`);

@@ -1,5 +1,5 @@
 /**
- * Shared test fixtures for treenav-mcp tests.
+ * Shared test fixtures for treenav tests.
  *
  * Provides in-memory markdown content, frontmatter variations,
  * and directory structures for testing without filesystem I/O.

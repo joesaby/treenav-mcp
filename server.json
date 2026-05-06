@@ -1,16 +1,16 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.joesaby/treenav-mcp",
+  "name": "io.github.joesaby/treenav",
   "description": "BM25 search + tree navigation over markdown docs for AI agents. No embeddings, no LLM calls.",
   "repository": {
-    "url": "https://github.com/joesaby/treenav-mcp",
+    "url": "https://github.com/joesaby/treenav",
     "source": "github"
   },
   "version": "1.0.1",
   "packages": [
     {
       "registryType": "npm",
-      "identifier": "treenav-mcp",
+      "identifier": "treenav",
       "version": "1.0.1",
       "runtimeHint": "bunx",
       "transport": {

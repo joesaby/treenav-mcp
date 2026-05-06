@@ -1,5 +1,5 @@
 /**
- * treenav-mcp type definitions
+ * treenav type definitions
  *
  * Models the hierarchical document tree (PageIndex) with search
  * capabilities adapted from Pagefind (CloudCannon). See DESIGN.md

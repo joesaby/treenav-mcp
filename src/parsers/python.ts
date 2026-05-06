@@ -3,7 +3,7 @@
  *
  * Extracts structural symbols from Python files using regex patterns.
  * Maps classes, functions, and imports into a hierarchy compatible
- * with treenav-mcp's TreeNode model.
+ * with treenav's TreeNode model.
  *
  * Relies on indentation-based block detection (Python's natural structure).
  */

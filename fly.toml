@@ -1,4 +1,4 @@
-app = "treenav-mcp"
+app = "treenav"
 primary_region = "iad"
 
 [build]
