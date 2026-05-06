@@ -159,8 +159,7 @@ Memory: ~25–50MB for 900 docs; ~10–20MB for 1,500 code files with full posit
 
 ## Standing on Shoulders
 
-- **[PageIndex](https://pageindex.ai)** — Hierarchical tree navigation and the agent reasoning workflow: search → outline → retrieve.
-- **[Pagefind](https://pagefind.app)** by **[CloudCannon](https://cloudcannon.com)** — BM25 scoring, positional index, filter facets, density excerpts, stemming, content hashing, multisite weighting. Full attribution in [DESIGN.md](docs/DESIGN.md).
+treenav builds on direct ideas from [PageIndex](https://pageindex.ai), [Pagefind](https://pagefind.app), [Semble](https://github.com/MinishLab/semble), and [Model2Vec](https://github.com/MinishLab/model2vec). The full record — what we borrowed, from whom, where it lives in the code — is in [`docs/ACKNOWLEDGEMENTS.md`](docs/ACKNOWLEDGEMENTS.md).
 
 ## License
 
