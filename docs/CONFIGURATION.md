@@ -2,12 +2,13 @@
 
 ## Environment Variables
 
-### Markdown indexing
+### Markdown / structured-data indexing
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DOCS_ROOT` | `./docs` | Path to markdown repository root |
-| `DOCS_GLOB` | `**/*.md` | File glob pattern |
+| `DOCS_GLOB` | `**/*.md` | File glob (comma-separated for multi-glob, e.g. `**/*.md,**/*.csv,**/*.jsonl`) |
+| `CSV_MAX_TEXT_LENGTH` | `2000` | Max chars indexed per text field in CSV/JSONL rows |
 | `MAX_DEPTH` | `6` | Max heading depth to index (1–6) |
 | `SUMMARY_LENGTH` | `200` | Characters in node summaries |
 | `PORT` | `3100` | HTTP server port (`serve:http` only) |
@@ -57,6 +58,20 @@ CODE_ROOT=./src CODE_WEIGHT=0.8 bun run serve
 
 ---
 
+## Wiki curation (opt-in write tools)
+
+The curation toolset (`find_similar`, `draft_wiki_entry`, `write_wiki_entry`) is gated behind a single env var and is **off by default**. When unset, treenav stays read-only and these tools are not registered with the MCP server.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WIKI_WRITE` | *(unset)* | Set to `1` to enable the write-side curation toolset (`find_similar`, `draft_wiki_entry`, `write_wiki_entry`). |
+| `WIKI_ROOT` | `$DOCS_ROOT` | Filesystem root that curated entries must live under. Writes outside this path are rejected. |
+| `WIKI_DUPLICATE_THRESHOLD` | `0.35` | Overlap ratio above which writes warn and require `allow_duplicate=true`. |
+
+See [adr/0001-llm-curated-wiki.md](./adr/0001-llm-curated-wiki.md) and [wiki-curation-spec.md](./wiki-curation-spec.md) for the full design.
+
+---
+
 ## Multiple Collections
 
 Index multiple doc folders as weighted collections (Pagefind multisite style):
@@ -72,22 +87,27 @@ Each collection is named from its folder. The weight multiplier is applied to BM
 
 ## Ranking Tuning
 
-BM25 parameters can be set via environment variables. Defaults work well for most documentation corpora.
+BM25 ranking parameters and field weights are tunable, but **only via the
+`DocumentStore.setRanking()` API at library-embed time**, not via
+environment variables. The defaults below work well for most documentation
+corpora. For per-knob descriptions and corpus-type recommendations see
+[DESIGN.md](./DESIGN.md#scoring-tuning-guide).
 
-| Variable | Default | Effect |
-|----------|---------|--------|
-| `BM25_K1` | `1.2` | TF saturation — lower means repeated terms matter less |
-| `BM25_B` | `0.75` | Length normalization — higher promotes shorter sections |
-| `TITLE_WEIGHT` | `3.0` | Boost for matches in headings |
-| `CODE_WEIGHT` | `1.5` | Boost for matches in code blocks |
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `bm25_k1` | `1.2` | TF saturation — lower means repeated terms matter less |
+| `bm25_b` | `0.75` | Length normalization — higher promotes shorter sections |
+| `title_weight` | `3.0` | Boost for matches in headings |
+| `code_weight` | `1.5` | Boost for matches in code blocks |
+| `description_weight` | `2.0` | Boost for matches in frontmatter description |
+| `term_proximity_bonus` | `2.0` | Co-occurrence reward for multi-term queries |
+| `full_coverage_bonus` | `5.0` | All-terms-present reward |
+| `prefix_penalty` | `0.5` | Discount applied to prefix-only matches |
 
-**By corpus type:**
-
-- **API reference:** `BM25_K1=0.8, BM25_B=0.9, CODE_WEIGHT=2.5` — short sections, high code density
-- **Tutorials:** defaults work well
-- **Mixed corpus:** `BM25_K1=1.0, BM25_B=0.6` — varied section lengths
-
-See [DESIGN.md](./DESIGN.md#scoring-tuning-guide) for the full parameter reference.
+> **Note:** the only ranking-related env var honored at runtime is
+> `CODE_WEIGHT` (multiplier on the *code collection*'s BM25 results, see
+> the Code navigation table above). It is not the same as the per-field
+> `code_weight` in this table.
 
 ---
 

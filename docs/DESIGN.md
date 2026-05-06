@@ -1,11 +1,11 @@
-# treenav-mcp — Architecture & Design
+# treenav — Architecture & Design
 
 ## Standing on the Shoulders of Giants
 
 This project is a synthesis of ideas from several excellent projects. None
 of the core architectural concepts are original — the value is in the
 specific composition that makes them work together for **agentic navigation**
-over markdown documentation and source code.
+over markdown documentation, source code, and structured data (CSV/JSONL).
 
 Every design decision is attributed to its source. If you're reading this
 document, you should go read the originals too:
@@ -366,9 +366,12 @@ search layer of this project.
 
 ### Four Layers
 
-1. **Markdown Indexer** — Parses raw markdown via `Bun.markdown.render()` into
-   `IndexedDocument` objects with metadata, tree nodes (one per heading),
-   filter facets from frontmatter, and content hash. Zero LLM cost.
+1. **Markdown / Structured-Data Indexer** — Parses raw markdown via
+   `Bun.markdown.render()` into `IndexedDocument` objects with metadata,
+   tree nodes (one per heading), filter facets from frontmatter, and content
+   hash. The same indexer also handles CSV and JSONL inputs, mapping rows
+   into nodes and exposing them via the `lookup_row` O(1) key→row tool.
+   Zero LLM cost.
 
 2. **Code Indexer** — Parses source files using language-specific parsers
    (TypeScript regex AST, Python indentation-aware, generic for Go/Rust/C++
@@ -381,10 +384,14 @@ search layer of this project.
    Handles both markdown nodes and code symbol nodes identically.
    Supports incremental re-indexing via content hashing.
 
-4. **MCP Server** — Exposes 6 tools via `@modelcontextprotocol/sdk`:
-   `list_documents`, `search_documents`, `get_tree`, `get_node_content`,
-   `navigate_tree` (all work on both docs and code), plus `find_symbol`
-   for code-specific filtering by symbol kind and language.
+4. **MCP Server** — Exposes 8 read tools via `@modelcontextprotocol/sdk`:
+   `list_documents`, `search_documents`, `grep_documents` (literal/regex
+   match without stemming), `get_tree`, `get_node_content`, `navigate_tree`
+   (all work on docs, code, and structured rows), plus `find_symbol` for
+   code-specific filtering by symbol kind and language, and `lookup_row`
+   for O(1) key→row retrieval against indexed CSV/JSONL data. An optional
+   3-tool curation surface (`find_similar`, `draft_wiki_entry`,
+   `write_wiki_entry`) is registered when `WIKI_WRITE=1`.
 
 ---
 
