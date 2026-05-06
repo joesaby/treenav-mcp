@@ -1,8 +1,10 @@
 # treenav
 
-BM25 search + hierarchical tree navigation over documentation and source code, via MCP.
+**A local search backend for code, docs, and structured data that AI agents can navigate.**
 
-Give an AI agent a table of contents it can reason over — for your markdown docs and codebase alike. It searches with BM25, reads the outline, decides which sections matter, and retrieves only what it needs. No vector DB, no embeddings, no LLM calls at index time.
+BM25 search, literal/regex grep, AST-based tree navigation, and O(1) row lookup — over markdown documentation, source code, and CSV/JSONL data. Code parsers cover TypeScript, JavaScript, Python, Go, Rust, Java, Kotlin, Scala, C, C++, C#, Ruby, Swift, PHP, and more. Use it as an MCP server, an HTTP service, or a library you embed in your own MCP. No vector DB, no embeddings, no LLM calls at index or query time.
+
+**Works with:** [Claude Code](https://claude.com/claude-code), [Claude Desktop](https://claude.ai), [Cursor](https://cursor.sh), [Cline](https://github.com/cline/cline), [Continue](https://continue.dev), [Goose](https://github.com/block/goose), or any MCP-compatible client. Also runnable as a standalone HTTP service, as a TypeScript library imported into your own MCP server, or via `bunx treenav init` to wire treenav into a host's MCP config in one command.
 
 ## Why not just grep or RAG?
 

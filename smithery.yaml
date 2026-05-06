@@ -1,5 +1,5 @@
 name: treenav
-description: Agentic document retrieval over markdown — BM25 search + tree navigation via MCP. No vector DB, no embeddings, no LLM calls at index time.
+description: Local search backend for code and docs that AI agents can navigate — BM25 + AST tree navigation. MCP server or embeddable library. No vector DB, no embeddings, no LLM calls. TypeScript, Python, Go, Rust, Java, C++, and more.
 license: MIT
 homepage: https://github.com/joesaby/treenav
 
