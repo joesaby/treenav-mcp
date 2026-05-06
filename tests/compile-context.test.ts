@@ -375,3 +375,32 @@ describe("dispatchSymbol", () => {
     expect(hits).toEqual([]);
   });
 });
+
+import { collectOutlines } from "../src/compile-context";
+
+describe("collectOutlines", () => {
+  test("returns outlines for the top N unique doc_ids across hits", () => {
+    const store = makeStoreWithFixtures();
+    const hits = dispatchSearch(store, "token rotation", "docs", undefined, 3);
+    const outlines = collectOutlines(store, hits, 1);
+    expect(outlines.length).toBe(1);
+    expect(outlines[0].nodes.length).toBeGreaterThan(0);
+    expect(outlines[0].doc_id).toBe(hits[0].doc_id);
+  });
+
+  test("returns empty when topN is 0", () => {
+    const store = makeStoreWithFixtures();
+    const hits = dispatchSearch(store, "token rotation", "docs", undefined, 3);
+    expect(collectOutlines(store, hits, 0)).toEqual([]);
+  });
+
+  test("dedupes by doc_id (multiple hits in one doc → one outline)", () => {
+    const store = makeStoreWithFixtures();
+    const hits: CompileContextHit[] = [
+      { source: "docs", doc_id: "auth-runbook", node_id: "n0", doc_title: "x", node_title: "x", file_path: "x", score: 1 },
+      { source: "docs", doc_id: "auth-runbook", node_id: "n1", doc_title: "x", node_title: "x", file_path: "x", score: 0.9 },
+    ];
+    const outlines = collectOutlines(store, hits, 5);
+    expect(outlines.length).toBe(1);
+  });
+});

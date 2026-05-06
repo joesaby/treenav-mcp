@@ -11,6 +11,8 @@ import type {
   ResolvedMode,
   CompileContextHit,
   ResolvedSource,
+  CompileContextOutline,
+  CompileContextOutlineNode,
 } from "./types";
 import type { DocumentStore } from "./store";
 
@@ -160,4 +162,34 @@ export function dispatchSymbol(
     score: r.score,
     signature: r.snippet || undefined,
   }));
+}
+
+/**
+ * Collect TreeOutlines for the top-N unique doc_ids across the merged
+ * hit list. Hits arrive pre-ranked; first occurrence wins.
+ */
+export function collectOutlines(
+  store: DocumentStore,
+  hits: CompileContextHit[],
+  topN: number
+): CompileContextOutline[] {
+  if (topN <= 0) return [];
+  const seen = new Set<string>();
+  const outlines: CompileContextOutline[] = [];
+  for (const h of hits) {
+    if (seen.has(h.doc_id)) continue;
+    seen.add(h.doc_id);
+    const tree = store.getTree(h.doc_id);
+    if (!tree) continue;
+    const nodes: CompileContextOutlineNode[] = tree.nodes.map((n) => ({
+      node_id: n.node_id,
+      title: n.title,
+      level: n.level,
+      word_count: n.word_count,
+      summary: n.summary,
+    }));
+    outlines.push({ doc_id: tree.doc_id, doc_title: tree.title, nodes });
+    if (outlines.length >= topN) break;
+  }
+  return outlines;
 }
