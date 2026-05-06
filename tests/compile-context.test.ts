@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import type {
   CompileContextInput,
   CompileContextResult,
@@ -654,6 +654,7 @@ describe("compileContext (top-level)", () => {
   });
 });
 
+import { formatSearchResults } from "../src/search-formatter";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerTools } from "../src/tools";
 
@@ -720,5 +721,180 @@ describe("compileContext edge cases", () => {
       output: { top_k_per_source: 3, max_tokens: 2000 },
     });
     expect(result.hits_by_source.code.length).toBe(0);
+  });
+});
+
+// ─── Token-win measurement ─────────────────────────────────────────────────
+//
+// Layer 3: verify that compile_context returns ≥30% fewer bytes than the
+// equivalent baseline agent chain on representative skill-style flows.
+//
+// Baseline chain (what an agent does today, step by step):
+//   1. search_documents — rendered via formatSearchResults, which ALREADY
+//      inlines the full subtree content of the top 3 results (INLINE_CONTENT_TOP_N=3).
+//      This is what the agent actually receives from the tool.
+//   2. get_tree on the top-ranked document — indented outline the agent
+//      would examine to decide which section to retrieve.
+//   3. get_node_content on the top node — the full section text.
+//
+// The baseline is generous: step 1 already contains inline content, so the
+// agent may not always do steps 2+3. But the value claim is that a single
+// compile_context call (with outlines for the top 1 result, no full-content
+// inline) is shorter than even the bare minimum 3-step chain.
+//
+// Compose path: compile_context with top_k_per_source=3, include_outlines_for_top=1,
+// include_full_content_for_top=0, max_tokens=2000.
+// The compose call returns hit snippets + one outline (not full content), and
+// applies budget trimming — naturally much more compact.
+
+import { join } from "node:path";
+import { indexCollection } from "../src/indexer";
+import { indexCodeCollection } from "../src/code-indexer";
+
+// Shared store for the token-win suite (real corpus, loaded once).
+let tokenWinStore: DocumentStore;
+
+const TOKEN_WIN_MD_ROOT   = join(import.meta.dir, "fixtures/search-quality/md");
+const TOKEN_WIN_CODE_ROOT = join(import.meta.dir, "fixtures/search-quality/code");
+
+beforeAll(async () => {
+  const [mdDocs, codeDocs] = await Promise.all([
+    indexCollection({ root: TOKEN_WIN_MD_ROOT, name: "docs" }),
+    indexCodeCollection({ root: TOKEN_WIN_CODE_ROOT, name: "code" }),
+  ]);
+  tokenWinStore = new DocumentStore();
+  tokenWinStore.load([...mdDocs, ...codeDocs]);
+});
+
+// ── Rendering helpers for baseline steps 2 and 3 ────────────────────────
+// These mirror the exact text produced by the MCP tool handlers in tools.ts.
+
+/**
+ * Mirror of the get_tree handler output (tools.ts lines 246-257).
+ * The agent receives this formatted outline after calling get_tree.
+ */
+function renderTreeLikeGetTree(store: DocumentStore, doc_id: string): string {
+  const tree = store.getTree(doc_id);
+  if (!tree) return `Document "${doc_id}" not found.`;
+  const outline = tree.nodes
+    .map((n) => {
+      const indent = "  ".repeat(n.level - 1);
+      return `${indent}[${n.node_id}] ${"#".repeat(n.level)} ${n.title} (${n.word_count} words)\n${indent}  ${n.summary ? `Summary: ${n.summary.slice(0, 120)}…` : ""}`;
+    })
+    .join("\n");
+  return `Document: ${tree.title}\nDoc ID: ${tree.doc_id}\nSections: ${tree.nodes.length}\n\n${outline}\n\nTo read a section's full content, call get_node_content("${doc_id}", ["node_id"]).\nTo get a section and all its subsections, call navigate_tree("${doc_id}", "node_id").`;
+}
+
+/**
+ * Mirror of the get_node_content handler output (tools.ts lines 304-308).
+ * The agent receives this after calling get_node_content with a single node.
+ */
+function renderNodeContentLikeGetNodeContent(
+  store: DocumentStore,
+  doc_id: string,
+  node_id: string
+): string {
+  const result = store.getNodeContent(doc_id, [node_id]);
+  if (!result || result.nodes.length === 0) return `No node found for ${node_id}.`;
+  return result.nodes
+    .map(
+      (n) =>
+        `━━━ ${n.title} [${n.node_id}] (H${n.level}) ━━━\n\n${n.content || "(empty section)"}`
+    )
+    .join("\n\n");
+}
+
+describe("compile_context token-win vs. baseline chain", () => {
+  // Each flow models a typical skill-driven multi-step retrieve loop:
+  //   (a) search_documents to find candidates — agent receives ranked snippets
+  //       PLUS inlined full subtree content for top 3 (the actual tool output)
+  //   (b) get_tree on the top result for outline inspection
+  //   (c) get_node_content on the chosen section
+  // We use the actual rendering functions to measure bytes the agent receives.
+  const flows: Array<{
+    intent: string;
+    filters: Record<string, string | string[]> | undefined;
+  }> = [
+    { intent: "auth token rotation", filters: { type: "runbook" } },
+    { intent: "incident response procedure", filters: { type: "runbook" } },
+    { intent: "AuthService", filters: undefined },
+    { intent: "rate limiter implementation", filters: undefined },
+    { intent: "deploy freeze policy", filters: { type: "guide" } },
+    { intent: "JWT signing key", filters: undefined },
+    { intent: "database migration runbook", filters: { type: "runbook" } },
+    { intent: "feature flag rollout", filters: undefined },
+    { intent: "circuit breaker pattern", filters: undefined },
+    { intent: "oncall escalation", filters: { type: "guide" } },
+  ];
+
+  test("compile_context returns ≥30% fewer tokens on average", () => {
+    let baselineTotalBytes = 0;
+    let composeTotalBytes = 0;
+
+    for (const flow of flows) {
+      // ── Baseline: search → get_tree → get_node_content ──────────────
+      //
+      // Step 1: search_documents output.
+      // formatSearchResults already inlines full subtree content for the top 3
+      // hits — this is exactly what the agent receives from the tool.
+      const searchResults = tokenWinStore.searchDocuments(flow.intent, {
+        limit: 3,
+        filters: flow.filters,
+      });
+      const baselineSearchText = formatSearchResults(
+        searchResults,
+        tokenWinStore,
+        flow.intent
+      );
+
+      // Step 2: get_tree on the top result's document.
+      // Agent calls this to examine the outline before choosing a node.
+      let baselineTreeText = "";
+      if (searchResults.length > 0) {
+        baselineTreeText = renderTreeLikeGetTree(
+          tokenWinStore,
+          searchResults[0].doc_id
+        );
+      }
+
+      // Step 3: get_node_content on the top hit's node.
+      // Agent calls this after inspecting the tree.
+      let baselineContentText = "";
+      if (searchResults.length > 0) {
+        baselineContentText = renderNodeContentLikeGetNodeContent(
+          tokenWinStore,
+          searchResults[0].doc_id,
+          searchResults[0].node_id
+        );
+      }
+
+      const baselineText = [baselineSearchText, baselineTreeText, baselineContentText]
+        .filter(Boolean)
+        .join("\n\n");
+      baselineTotalBytes += Buffer.byteLength(baselineText, "utf8");
+
+      // ── Compose: single compile_context call ─────────────────────────
+      //
+      // Returns hit snippets (no full-content inline) + one document outline.
+      // Budget trimming keeps it compact.
+      const { text: composeText } = compileContext(tokenWinStore, {
+        intent: flow.intent,
+        sources: ["all"],
+        filters: flow.filters,
+        output: {
+          top_k_per_source: 3,
+          include_outlines_for_top: 1,
+          include_full_content_for_top: 0,
+          max_tokens: 2000,
+        },
+      });
+      composeTotalBytes += Buffer.byteLength(composeText, "utf8");
+    }
+
+    const reduction = (baselineTotalBytes - composeTotalBytes) / baselineTotalBytes;
+    console.log(
+      `Token-win: baseline=${baselineTotalBytes}b compose=${composeTotalBytes}b reduction=${(reduction * 100).toFixed(1)}%`
+    );
+    expect(reduction).toBeGreaterThanOrEqual(0.30);
   });
 });
