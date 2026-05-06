@@ -447,3 +447,94 @@ export function singleRootConfig(
     max_depth: 6,
   };
 }
+
+// ── compile_context (composed retrieval) ───────────────────────────
+//
+// See docs/superpowers/specs/2026-05-06-compile-context-design.md
+// and docs/adr/0002-multi-intent-out-of-scope.md.
+//
+// compile_context composes the existing read primitives
+// (searchDocuments / grepDocuments / lookupRow / getTree / getSubtree)
+// behind one call. Pure orchestration — no new ranking, no new index.
+
+export type CompileContextMode =
+  | "auto"
+  | "search"
+  | "grep"
+  | "lookup"
+  | "symbol";
+
+/** Resolved mode after `auto` heuristic runs. Never `"auto"`. */
+export type ResolvedMode = Exclude<CompileContextMode, "auto">;
+
+export type CompileContextSource = "docs" | "code" | "rows" | "all";
+
+/** Concrete source name in the result (never `"all"`). */
+export type ResolvedSource = "docs" | "code" | "rows";
+
+export interface CompileContextInput {
+  intent: string;
+  mode?: CompileContextMode;
+  sources?: CompileContextSource[];
+  filters?: Record<string, string | string[]>;
+  output: {
+    top_k_per_source?: number;
+    include_snippets?: boolean;
+    include_outlines_for_top?: number;
+    include_full_content_for_top?: number;
+    max_tokens?: number;
+  };
+}
+
+export interface CompileContextHit {
+  source: ResolvedSource;
+  doc_id: string;
+  node_id: string;
+  doc_title: string;
+  node_title: string;
+  file_path: string;
+  score: number;
+  /** Density-based snippet for search/grep hits. */
+  snippet?: string;
+  /** Symbol signature for symbol-mode / code hits. */
+  signature?: string;
+  /** Line number for grep hits. */
+  line_no?: number;
+}
+
+export interface CompileContextOutlineNode {
+  node_id: string;
+  title: string;
+  level: number;
+  word_count: number;
+  summary: string;
+}
+
+export interface CompileContextOutline {
+  doc_id: string;
+  doc_title: string;
+  nodes: CompileContextOutlineNode[];
+}
+
+export interface CompileContextFullContent {
+  doc_id: string;
+  node_id: string;
+  node_title: string;
+  content: string;
+}
+
+export interface CompileContextResult {
+  intent: string;
+  resolved_mode: ResolvedMode;
+  sources: ResolvedSource[];
+  duration_ms: number;
+  hits_by_source: Record<ResolvedSource, CompileContextHit[]>;
+  /** Total hits available before top_k_per_source cut, per source. */
+  hit_totals_by_source: Record<ResolvedSource, number>;
+  outlines: CompileContextOutline[];
+  full_content: CompileContextFullContent[];
+  /** Human-readable notes about what was trimmed for budget. */
+  trim_notes: string[];
+  tokens_used_estimate: number;
+  tokens_budget: number;
+}
