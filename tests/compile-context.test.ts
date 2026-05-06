@@ -664,3 +664,61 @@ describe("compile_context MCP tool registration", () => {
     expect(() => registerTools(server, store)).not.toThrow();
   });
 });
+
+describe("compileContext edge cases", () => {
+  test("empty source partition still emits its header", () => {
+    const store = makeStoreWithFixtures();
+    const { text } = compileContext(store, {
+      intent: "nonexistent-query-no-matches-anywhere-xyz",
+      sources: ["docs", "code"],
+      output: { top_k_per_source: 3, max_tokens: 2000 },
+    });
+    expect(text).toMatch(/## Hits — docs \(0 of 0\)/);
+    expect(text).toMatch(/## Hits — code \(0 of 0\)/);
+  });
+
+  test("lookup mode with mixed sources only addresses rows", () => {
+    const store = makeStoreWithRow();
+    const { result } = compileContext(store, {
+      intent: "PROJ-44",
+      mode: "auto",
+      sources: ["all"],
+      output: { top_k_per_source: 3, max_tokens: 2000 },
+    });
+    expect(result.resolved_mode).toBe("lookup");
+    expect(result.hits_by_source.rows.length).toBe(1);
+    expect(result.hits_by_source.docs.length).toBe(0);
+    expect(result.hits_by_source.code.length).toBe(0);
+  });
+
+  test("filter that excludes everything returns empty hits", () => {
+    const store = makeStoreWithFixtures();
+    const { result } = compileContext(store, {
+      intent: "token rotation",
+      sources: ["docs"],
+      filters: { type: "no-such-type-xyz" },
+      output: { top_k_per_source: 3, max_tokens: 2000 },
+    });
+    expect(result.hits_by_source.docs.length).toBe(0);
+  });
+
+  test("mode=lookup explicit with no key match returns empty", () => {
+    const store = makeStoreWithFixtures();
+    const { result } = compileContext(store, {
+      intent: "MISSING-99",
+      mode: "lookup",
+      output: { top_k_per_source: 3, max_tokens: 2000 },
+    });
+    expect(result.hits_by_source.rows.length).toBe(0);
+  });
+
+  test("missing CODE_ROOT (no code documents) returns empty code partition", () => {
+    const store = makeStoreWithFixtures();
+    const { result } = compileContext(store, {
+      intent: "this-query-matches-no-code-xyz",
+      sources: ["docs", "code"],
+      output: { top_k_per_source: 3, max_tokens: 2000 },
+    });
+    expect(result.hits_by_source.code.length).toBe(0);
+  });
+});
