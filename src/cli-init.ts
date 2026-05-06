@@ -2,9 +2,9 @@
  * Init CLI — scaffolds a Karpathy-style LLM wiki and configures AI tools.
  *
  * Usage:
- *   bunx treenav-mcp init           # interactive tool selection
- *   bunx treenav-mcp init --all     # configure all supported tools
- *   bunx treenav-mcp init --dry-run # print actions without writing
+ *   bunx treenav init           # interactive tool selection
+ *   bunx treenav init --all     # configure all supported tools
+ *   bunx treenav init --dry-run # print actions without writing
  */
 
 import { resolve, join, dirname } from "node:path";
@@ -13,7 +13,7 @@ import { mkdir, writeFile, appendFile, readFile } from "node:fs/promises";
 import * as readline from "node:readline/promises";
 
 export const WIKI_CONVENTIONS = `
-## Wiki Conventions (treenav-mcp)
+## Wiki Conventions (treenav)
 
 When writing documentation to the wiki:
 
@@ -100,7 +100,7 @@ const MCP_ENV = {
 
 const MCP_JSON_SERVER = {
   command: "bunx",
-  args: ["treenav-mcp"],
+  args: ["treenav"],
   env: MCP_ENV,
 };
 
@@ -133,7 +133,7 @@ export function generateMcpConfig(tool: Tool): GeneratedFile | null {
           {
             mcp: {
               servers: {
-                treenav: { command: "bunx", args: ["treenav-mcp"], env: MCP_ENV },
+                treenav: { command: "bunx", args: ["treenav"], env: MCP_ENV },
               },
             },
           },
@@ -147,7 +147,7 @@ export function generateMcpConfig(tool: Tool): GeneratedFile | null {
         content: [
           "[mcp_servers.treenav]",
           `command = "bunx"`,
-          `args = ["treenav-mcp"]`,
+          `args = ["treenav"]`,
           "",
           "[mcp_servers.treenav.env]",
           `DOCS_ROOTS = "${MCP_ENV.DOCS_ROOTS}"`,
@@ -170,7 +170,7 @@ export function generateHookConfig(tool: Tool): GeneratedFile | null {
               PostToolUse: [
                 {
                   matcher: "write_wiki_entry",
-                  hooks: [{ type: "command", command: "bunx treenav-mcp lint" }],
+                  hooks: [{ type: "command", command: "bunx treenav lint" }],
                 },
               ],
             },
@@ -187,7 +187,7 @@ export function generateHookConfig(tool: Tool): GeneratedFile | null {
           {
             version: 1,
             hooks: {
-              afterMCPExecution: [{ command: "bunx treenav-mcp lint" }],
+              afterMCPExecution: [{ command: "bunx treenav lint" }],
             },
           },
           null,
@@ -202,8 +202,8 @@ export function generateHookConfig(tool: Tool): GeneratedFile | null {
           {
             hooks: {
               // Windsurf cannot filter by MCP tool name — runs on all MCP calls.
-              // treenav-mcp-lint exits quickly when there are no issues.
-              post_mcp_tool_use: [{ command: "bunx treenav-mcp lint" }],
+              // treenav-lint exits quickly when there are no issues.
+              post_mcp_tool_use: [{ command: "bunx treenav lint" }],
             },
           },
           null,
@@ -215,11 +215,11 @@ export function generateHookConfig(tool: Tool): GeneratedFile | null {
       return {
         path: ".opencode/plugins/treenav-lint.js",
         content: [
-          "// treenav-mcp lint plugin — runs after write_wiki_entry MCP tool calls",
+          "// treenav lint plugin — runs after write_wiki_entry MCP tool calls",
           "export const DoctreeLintPlugin = async ({ $ }) => ({",
           '  "tool.execute.after": async (event) => {',
           '    if (event?.tool?.name === "write_wiki_entry") {',
-          "      try { await $`bunx treenav-mcp lint`; } catch {}",
+          "      try { await $`bunx treenav lint`; } catch {}",
           "    }",
           "  },",
           "});",
@@ -241,7 +241,7 @@ export function generateHookConfig(tool: Tool): GeneratedFile | null {
                     {
                       type: "command",
                       command:
-                        "# Codex MCP hooks not yet supported. Remove this comment when available.\n# bunx treenav-mcp lint",
+                        "# Codex MCP hooks not yet supported. Remove this comment when available.\n# bunx treenav lint",
                     },
                   ],
                 },
@@ -279,7 +279,7 @@ export function generateAgentInstructions(tool: Tool): InstructionFile | null {
         path: ".cursor/rules/treenav-wiki.mdc",
         content: [
           "---",
-          "description: treenav-mcp wiki conventions — duplicate checking, update workflow, frontmatter",
+          "description: treenav wiki conventions — duplicate checking, update workflow, frontmatter",
           "alwaysApply: false",
           "---",
           WIKI_CONVENTIONS,
@@ -353,7 +353,7 @@ export async function writeConfigFiles(
     if (instr) {
       const absPath = join(root, instr.path);
       if (instr.append) {
-        const marker = "Wiki Conventions (treenav-mcp)";
+        const marker = "Wiki Conventions (treenav)";
         if (!dryRun) {
           const existing = existsSync(absPath)
             ? await readFile(absPath, "utf-8")
@@ -424,7 +424,7 @@ export async function main() {
   const all = args.includes("--all");
   const root = process.cwd();
 
-  console.log("treenav-mcp init");
+  console.log("treenav init");
   if (dryRun) console.log("(dry run — no files will be written)\n");
 
   const detected = detectTools(root);
@@ -438,7 +438,7 @@ export async function main() {
   if (tools.includes("claude-desktop")) {
     console.log("\nClaude Desktop — add to ~/Library/Application Support/Claude/claude_desktop_config.json:");
     console.log(JSON.stringify(
-      { mcpServers: { treenav: { command: "bunx", args: ["treenav-mcp"], env: { DOCS_ROOT: "/absolute/path/to/docs/wiki", WIKI_WRITE: "1" } } } },
+      { mcpServers: { treenav: { command: "bunx", args: ["treenav"], env: { DOCS_ROOT: "/absolute/path/to/docs/wiki", WIKI_WRITE: "1" } } } },
       null, 2
     ));
   }

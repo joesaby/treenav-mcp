@@ -56,7 +56,7 @@ export function formatGrepResult(outcome: GrepOutcome, pattern: string): string 
 }
 
 /**
- * Register all treenav-mcp tools and resources on the given MCP server.
+ * Register all treenav tools and resources on the given MCP server.
  *
  * Read tools (always registered):
  *   1. list_documents   — Browse the document catalog

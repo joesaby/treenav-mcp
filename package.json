@@ -1,7 +1,7 @@
 {
-  "name": "treenav-mcp",
-  "version": "1.0.2",
-  "mcpName": "io.github.joesaby/treenav-mcp",
+  "name": "treenav",
+  "version": "2.0.0",
+  "mcpName": "io.github.joesaby/treenav",
   "description": "Agentic document & code retrieval over markdown, source code, CSV, and JSONL — BM25 search + tree navigation via MCP. Inspired by PageIndex and Pagefind.",
   "type": "module",
   "keywords": [
@@ -19,20 +19,20 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/joesaby/treenav-mcp.git"
+    "url": "https://github.com/joesaby/treenav.git"
   },
-  "homepage": "https://github.com/joesaby/treenav-mcp#readme",
+  "homepage": "https://github.com/joesaby/treenav#readme",
   "bugs": {
-    "url": "https://github.com/joesaby/treenav-mcp/issues"
+    "url": "https://github.com/joesaby/treenav/issues"
   },
   "license": "MIT",
   "engines": {
     "bun": ">=1.3.8"
   },
   "bin": {
-    "treenav-mcp": "bin.ts",
-    "treenav-mcp-init": "bin-init.ts",
-    "treenav-mcp-lint": "bin-lint.ts"
+    "treenav": "bin.ts",
+    "treenav-init": "bin-init.ts",
+    "treenav-lint": "bin-lint.ts"
   },
   "files": [
     "src/",

@@ -1,5 +1,5 @@
 /**
- * Shared test helpers for treenav-mcp tests.
+ * Shared test helpers for treenav tests.
  *
  * Provides factory functions for building IndexedDocuments, TreeNodes,
  * and a ready-to-use MCP test client wired through InMemoryTransport.

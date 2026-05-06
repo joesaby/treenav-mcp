@@ -1,4 +1,4 @@
-# treenav-mcp
+# treenav
 
 BM25 search + hierarchical tree navigation over documentation and source code, via MCP.
 
@@ -59,13 +59,13 @@ Context budget: **2K–8K tokens** of precise content, vs 4K–20K tokens of noi
 curl -fsSL https://bun.com/install | bash
 
 # Docs + source code (recommended)
-DOCS_ROOT=./docs CODE_ROOT=./src bunx treenav-mcp
+DOCS_ROOT=./docs CODE_ROOT=./src bunx treenav
 
 # Docs only
-DOCS_ROOT=/path/to/your/docs bunx treenav-mcp
+DOCS_ROOT=/path/to/your/docs bunx treenav
 
 # Source code only
-CODE_ROOT=./src bunx treenav-mcp
+CODE_ROOT=./src bunx treenav
 ```
 
 ### Claude Desktop / Claude Code Configuration
@@ -75,7 +75,7 @@ CODE_ROOT=./src bunx treenav-mcp
   "mcpServers": {
     "treenav": {
       "command": "bunx",
-      "args": ["treenav-mcp"],
+      "args": ["treenav"],
       "env": {
         "DOCS_ROOT": "/path/to/your/docs",
         "CODE_ROOT": "/path/to/your/source"
@@ -88,8 +88,8 @@ CODE_ROOT=./src bunx treenav-mcp
 ### Run from source
 
 ```bash
-git clone https://github.com/joesaby/treenav-mcp.git
-cd treenav-mcp
+git clone https://github.com/joesaby/treenav.git
+cd treenav
 bun install
 DOCS_ROOT=./docs CODE_ROOT=./src bun run serve       # stdio
 DOCS_ROOT=./docs bun run serve:http                  # HTTP (port 3100)

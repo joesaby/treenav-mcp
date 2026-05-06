@@ -123,7 +123,7 @@ async function main() {
 /** Factory: creates a configured MCP server instance with all tools */
 function createMcpServer(store: DocumentStore, wiki?: WikiOptions): McpServer {
   const server = new McpServer({
-    name: "treenav-mcp",
+    name: "treenav",
     version: "1.0.0",
   });
 

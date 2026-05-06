@@ -1,5 +1,5 @@
 /**
- * Code Indexer — AST-based code navigation for treenav-mcp
+ * Code Indexer — AST-based code navigation for treenav
  *
  * Maps source code files into the same IndexedDocument / TreeNode model
  * used by the markdown indexer. This lets the existing BM25 search,

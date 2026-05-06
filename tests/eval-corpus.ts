@@ -1,5 +1,5 @@
 /**
- * Comprehensive Evaluation Harness for treenav-mcp
+ * Comprehensive Evaluation Harness for treenav
  *
  * Generates ~10,000 test questions from the actual sbc-docs corpus
  * and evaluates searchDocuments, findSymbol, and findFiles.
@@ -513,7 +513,7 @@ function printMetrics(label: string, m: MetricSet) {
 
 async function main() {
   console.log("═══════════════════════════════════════════════════════════");
-  console.log("  treenav-mcp Evaluation Harness");
+  console.log("  treenav Evaluation Harness");
   console.log("═══════════════════════════════════════════════════════════");
   console.log(`  Docs root:     ${DOCS_ROOT}`);
   console.log(`  Target Qs:     ${TARGET_QUESTIONS}`);

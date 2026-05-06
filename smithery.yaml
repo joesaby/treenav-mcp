@@ -1,7 +1,7 @@
-name: treenav-mcp
+name: treenav
 description: Agentic document retrieval over markdown — BM25 search + tree navigation via MCP. No vector DB, no embeddings, no LLM calls at index time.
 license: MIT
-homepage: https://github.com/joesaby/treenav-mcp
+homepage: https://github.com/joesaby/treenav
 
 startCommand:
   type: stdio

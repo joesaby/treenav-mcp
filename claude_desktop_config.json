@@ -2,7 +2,7 @@
   "mcpServers": {
     "md-tree": {
       "command": "bun",
-      "args": ["run", "/path/to/treenav-mcp/src/server.ts"],
+      "args": ["run", "/path/to/treenav/src/server.ts"],
       "env": {
         "DOCS_ROOT": "/path/to/your/markdown/repo"
       }

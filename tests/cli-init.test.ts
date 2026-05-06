@@ -50,7 +50,7 @@ describe("generateMcpConfig", () => {
     const parsed = JSON.parse(result!.content);
     expect(result!.path).toBe(".mcp.json");
     expect(parsed.mcpServers.treenav.command).toBe("bunx");
-    expect(parsed.mcpServers.treenav.args).toContain("treenav-mcp");
+    expect(parsed.mcpServers.treenav.args).toContain("treenav");
     expect(parsed.mcpServers.treenav.env.DOCS_ROOTS).toContain("docs/wiki:1.0");
     expect(parsed.mcpServers.treenav.env.WIKI_WRITE).toBe("1");
   });
@@ -96,7 +96,7 @@ describe("generateHookConfig", () => {
     const postHooks = parsed.hooks?.PostToolUse;
     expect(postHooks).toBeDefined();
     expect(postHooks[0].matcher).toBe("write_wiki_entry");
-    expect(postHooks[0].hooks[0].command).toContain("treenav-mcp lint");
+    expect(postHooks[0].hooks[0].command).toContain("treenav lint");
   });
 
   test("cursor: afterMCPExecution event", () => {
@@ -120,7 +120,7 @@ describe("generateHookConfig", () => {
     expect(result!.path).toBe(".opencode/plugins/treenav-lint.js");
     expect(result!.content).toContain("tool.execute.after");
     expect(result!.content).toContain("write_wiki_entry");
-    expect(result!.content).toContain("treenav-mcp lint");
+    expect(result!.content).toContain("treenav lint");
   });
 
   test("codex: PostToolUse present", () => {
@@ -217,7 +217,7 @@ describe("writeConfigFiles", () => {
     await writeConfigFiles(["claude-code"], dir, false);
     await writeConfigFiles(["claude-code"], dir, false); // run twice
     const content = await Bun.file(join(dir, "CLAUDE.md")).text();
-    const occurrences = (content.match(/Wiki Conventions \(treenav-mcp\)/g) || []).length;
+    const occurrences = (content.match(/Wiki Conventions \(treenav\)/g) || []).length;
     expect(occurrences).toBe(1);
   });
 });

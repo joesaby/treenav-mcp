@@ -74,7 +74,7 @@ const store = new DocumentStore();
 // ── Create MCP Server ────────────────────────────────────────────────
 
 const server = new McpServer({
-  name: "treenav-mcp",
+  name: "treenav",
   version: "1.0.0",
 });
 
@@ -117,12 +117,12 @@ async function main() {
   // before the (potentially slow) indexing phase begins.
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("[treenav-mcp] MCP server running on stdio");
+  console.error("[treenav] MCP server running on stdio");
 
   // Defer indexing to the next tick so the transport can process
   // the MCP handshake while indexing runs.
   setTimeout(async () => {
-    console.error(`[treenav-mcp] Indexing documents from: ${docs_root}`);
+    console.error(`[treenav] Indexing documents from: ${docs_root}`);
 
     const startTime = Date.now();
     const documents = await indexAllCollections(config);
@@ -142,25 +142,25 @@ async function main() {
       try {
         const glossaryData = await Bun.file(glossaryPath).json();
         store.loadGlossary(glossaryData);
-        console.error(`[treenav-mcp] Glossary loaded from ${glossaryPath}`);
+        console.error(`[treenav] Glossary loaded from ${glossaryPath}`);
       } catch (err: any) {
-        console.error(`[treenav-mcp] Warning: Failed to load glossary from ${glossaryPath}: ${err.message}`);
+        console.error(`[treenav] Warning: Failed to load glossary from ${glossaryPath}: ${err.message}`);
       }
     }
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     const stats = store.getStats();
     console.error(
-      `[treenav-mcp] Ready in ${elapsed}s — ${stats.document_count} docs, ${stats.total_nodes} sections, ${stats.indexed_terms} terms`
+      `[treenav] Ready in ${elapsed}s — ${stats.document_count} docs, ${stats.total_nodes} sections, ${stats.indexed_terms} terms`
     );
 
     if (wiki) {
-      console.error(`[treenav-mcp] Wiki write enabled — root: ${wiki.root}`);
+      console.error(`[treenav] Wiki write enabled — root: ${wiki.root}`);
     }
   }, 0);
 }
 
 main().catch((err) => {
-  console.error("[treenav-mcp] Fatal error:", err);
+  console.error("[treenav] Fatal error:", err);
   process.exit(1);
 });

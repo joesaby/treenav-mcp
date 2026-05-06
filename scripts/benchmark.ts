@@ -1,5 +1,5 @@
 /**
- * treenav-mcp parser benchmark
+ * treenav parser benchmark
  *
  * Indexes a local codebase and reports parsing quality metrics:
  * symbol extraction rates, indexing speed, and search quality.
@@ -138,7 +138,7 @@ function out(s = "") {
   lines.push(s);
 }
 
-out(`# treenav-mcp Benchmark — ${repoName}`);
+out(`# treenav Benchmark — ${repoName}`);
 out();
 out(`**Date:** ${new Date().toISOString().slice(0, 10)}`);
 out(`**Root:** \`${root}\``);

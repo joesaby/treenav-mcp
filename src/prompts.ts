@@ -1,5 +1,5 @@
 /**
- * MCP Prompt registrations for treenav-mcp.
+ * MCP Prompt registrations for treenav.
  *
  * Prompts are workflow templates discoverable by ANY MCP client
  * (Claude Desktop, Cursor, Windsurf, etc.) — not just Claude Code.
@@ -33,7 +33,7 @@ export function registerPrompts(
           text: [
             `Find information about: ${query}`,
             "",
-            "Follow this workflow using the treenav-mcp tools:",
+            "Follow this workflow using the treenav tools:",
             "",
             "## Step 1: Pick the right search tool",
             "",
@@ -147,7 +147,7 @@ export function registerPrompts(
             text: [
               `Create a new wiki entry about: ${topic}`,
               "",
-              "Follow this workflow using the treenav-mcp tools:",
+              "Follow this workflow using the treenav tools:",
               "",
               "## Step 1: Check for duplicates",
               "Call find_similar with the content you plan to write.",
@@ -184,7 +184,7 @@ export function registerPrompts(
               "## Writing tips",
               "- Define acronyms inline on first use, e.g., \"TLS (Transport Layer Security)\" — these are auto-extracted into the glossary",
               "- Use heading hierarchy (H1 → H2 → H3) — each heading becomes a navigable tree node",
-              "- Link to related docs with markdown links — treenav-mcp extracts these as cross-references",
+              "- Link to related docs with markdown links — treenav extracts these as cross-references",
               "- Keep one topic per file — smaller docs score better in search",
             ].join("\n"),
           },
@@ -206,7 +206,7 @@ export function registerPrompts(
         content: {
           type: "text" as const,
           text: [
-            "Perform a wiki health audit using the treenav-mcp tools.",
+            "Perform a wiki health audit using the treenav tools.",
             "",
             "## Step 1: Find orphaned pages",
             "Call list_documents() with no filters.",
