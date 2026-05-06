@@ -297,6 +297,133 @@ function formatFollowUp(): string {
   ].join("\n");
 }
 
+/** Cheap token estimate: bytes / 4. */
+function estimateTokens(text: string): number {
+  return Math.ceil(Buffer.byteLength(text, "utf8") / 4);
+}
+
+function estimateResultTokens(result: CompileContextResult): number {
+  return estimateTokens(formatResult(result));
+}
+
+/**
+ * Trim a result so that its rendered text fits within `budget` tokens.
+ *
+ * Drop order (lowest-priority dropped first — highest-priority kept last):
+ *   1. Outline nodes: deepest leaves first, then entire outlines (spec §5 step 6)
+ *   2. Full-content blocks: lowest-ranked first (spec §5 step 5)
+ *   3. Snippets: shorten to 80 chars, then drop entirely (spec §5 step 4)
+ *   4. Extra hits: lowest-ranked first, always preserving top-1 per source (spec §5 step 3)
+ *
+ * The intent header and follow-up section are never trimmed (spec §5 steps 1, 7).
+ */
+export function trimToBudget(
+  result: CompileContextResult,
+  budget: number
+): CompileContextResult {
+  const r: CompileContextResult = JSON.parse(JSON.stringify(result));
+  r.tokens_budget = budget;
+  r.trim_notes = [];
+
+  const isOver = () => estimateResultTokens(r) > budget;
+  if (!isOver()) {
+    r.tokens_used_estimate = estimateResultTokens(r);
+    return r;
+  }
+
+  // Step 6: Trim outlines — deepest leaves first, then drop entire outlines.
+  if (isOver() && r.outlines.length > 0) {
+    let droppedOutlineNodes = 0;
+    let droppedOutlines = 0;
+    while (isOver() && r.outlines.length > 0) {
+      const last = r.outlines[r.outlines.length - 1];
+      if (last.nodes.length > 0) {
+        // Find and drop deepest node (highest level number = most nested).
+        const maxLevel = Math.max(...last.nodes.map((n) => n.level));
+        const idx = last.nodes.findIndex((n) => n.level === maxLevel);
+        if (idx >= 0) {
+          last.nodes.splice(idx, 1);
+          droppedOutlineNodes++;
+        } else {
+          last.nodes.pop();
+          droppedOutlineNodes++;
+        }
+        // If nodes are now exhausted, drop the empty outline shell immediately.
+        if (last.nodes.length === 0) {
+          r.outlines.pop();
+          droppedOutlines++;
+        }
+      } else {
+        r.outlines.pop();
+        droppedOutlines++;
+      }
+    }
+    if (droppedOutlineNodes > 0) r.trim_notes.push(`trimmed ${droppedOutlineNodes} outline nodes`);
+    if (droppedOutlines > 0) r.trim_notes.push(`dropped ${droppedOutlines} outlines`);
+  }
+
+  // Step 5: Trim full-content blocks (lowest-ranked first).
+  if (isOver() && r.full_content.length > 0) {
+    let droppedFC = 0;
+    while (isOver() && r.full_content.length > 0) {
+      r.full_content.pop();
+      droppedFC++;
+    }
+    if (droppedFC > 0) r.trim_notes.push(`dropped ${droppedFC} full-content blocks`);
+  }
+
+  // Step 4a: Shorten snippets to 80 chars.
+  if (isOver()) {
+    let shortened = 0;
+    outer: for (const src of SOURCE_ORDER) {
+      const arr = r.hits_by_source[src];
+      if (!arr) continue;
+      for (const h of arr) {
+        if (h.snippet && h.snippet.length > 80) {
+          h.snippet = h.snippet.slice(0, 80);
+          shortened++;
+          if (!isOver()) break outer;
+        }
+      }
+    }
+    if (shortened > 0) r.trim_notes.push(`shortened ${shortened} snippets`);
+  }
+
+  // Step 4b: Drop snippets entirely (title-only).
+  if (isOver()) {
+    outer: for (const src of SOURCE_ORDER) {
+      const arr = r.hits_by_source[src];
+      if (!arr) continue;
+      for (const h of arr) {
+        if (h.snippet) {
+          h.snippet = undefined;
+          if (!isOver()) break outer;
+        }
+      }
+    }
+  }
+
+  // Step 3: Drop lowest-ranked hits within each source, keeping at least 1.
+  let droppedHits = 0;
+  while (isOver()) {
+    let droppedThisRound = false;
+    for (const src of SOURCE_ORDER) {
+      const arr = r.hits_by_source[src];
+      if (arr && arr.length > 1) {
+        arr.pop();
+        droppedHits++;
+        droppedThisRound = true;
+        if (!isOver()) break;
+      }
+    }
+    if (!droppedThisRound) break;
+  }
+  if (droppedHits > 0) r.trim_notes.push(`dropped ${droppedHits} hits`);
+
+  r.tokens_used_estimate = estimateResultTokens(r);
+  return r;
+}
+
 /**
  * Render a CompileContextResult as the canonical text artifact.
  * Section order is fixed; provenance brackets are mandatory on every hit.

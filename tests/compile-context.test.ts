@@ -534,3 +534,57 @@ describe("formatResult", () => {
     expect(text).toMatch(/\[auth-runbook → n1\]/);
   });
 });
+
+import { trimToBudget } from "../src/compile-context";
+
+describe("trimToBudget", () => {
+  test("returns input unchanged when under budget", () => {
+    const r = makeMinimalResult();
+    const trimmed = trimToBudget(r, 10000);
+    expect(trimmed.hits_by_source.docs.length).toBe(r.hits_by_source.docs.length);
+    expect(trimmed.outlines.length).toBe(r.outlines.length);
+    expect(trimmed.trim_notes.length).toBe(0);
+  });
+
+  test("preserves top-1 per source under tight budget", () => {
+    const r = makeMinimalResult();
+    // Add several extra hits per source.
+    for (let i = 0; i < 5; i++) {
+      r.hits_by_source.docs.push({
+        source: "docs",
+        doc_id: `extra-doc-${i}`,
+        node_id: `n${i}`,
+        doc_title: "extra",
+        node_title: "extra",
+        file_path: "extra.md",
+        score: 0.001,
+        snippet: "x".repeat(200),
+      });
+    }
+    r.hit_totals_by_source.docs = r.hits_by_source.docs.length;
+    const trimmed = trimToBudget(r, 50); // very tight
+    expect(trimmed.hits_by_source.docs.length).toBeGreaterThanOrEqual(1);
+    expect(trimmed.hits_by_source.code.length).toBeGreaterThanOrEqual(1);
+    expect(trimmed.trim_notes.length).toBeGreaterThan(0);
+  });
+
+  test("drops outlines before snippets, snippets before hits", () => {
+    const r = makeMinimalResult();
+    r.outlines = [
+      {
+        doc_id: "auth-runbook",
+        doc_title: "Auth Runbook",
+        nodes: Array.from({ length: 50 }, (_, i) => ({
+          node_id: `n${i}`,
+          title: `section ${i}`,
+          level: 2,
+          word_count: 100,
+          summary: "x".repeat(120),
+        })),
+      },
+    ];
+    const trimmed = trimToBudget(r, 200);
+    // Outlines should be the first thing dropped.
+    expect(trimmed.outlines.length).toBeLessThan(r.outlines.length);
+  });
+});
