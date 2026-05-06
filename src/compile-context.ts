@@ -72,3 +72,27 @@ export function dispatchSearch(
     snippet: r.snippet || undefined,
   }));
 }
+
+/**
+ * Dispatch an exact-key row lookup.
+ * Returns 0 or 1 hits, always tagged with source = "rows".
+ */
+export function dispatchLookup(
+  store: DocumentStore,
+  intent: string
+): CompileContextHit[] {
+  const result = store.lookupRow(intent);
+  if (!result) return [];
+  return [
+    {
+      source: "rows",
+      doc_id: result.doc_id,
+      node_id: result.node.node_id,
+      doc_title: result.doc_id,
+      node_title: result.node.title,
+      file_path: "",
+      score: 1.0,
+      snippet: result.node.summary || result.node.content.slice(0, 200),
+    },
+  ];
+}

@@ -277,3 +277,66 @@ describe("dispatchSearch", () => {
     }
   });
 });
+
+import { dispatchLookup } from "../src/compile-context";
+
+describe("dispatchLookup", () => {
+  test("returns the row when key exists", () => {
+    const store = makeStoreWithRow();
+    const hits = dispatchLookup(store, "PROJ-44");
+    expect(hits.length).toBe(1);
+    expect(hits[0].source).toBe("rows");
+    expect(hits[0].node_id).toBe("PROJ-44");
+  });
+
+  test("returns empty array when key not found", () => {
+    const store = makeStoreWithRow();
+    const hits = dispatchLookup(store, "MISSING-99");
+    expect(hits).toEqual([]);
+  });
+});
+
+// Helper: construct a store with a single row identified by PROJ-44.
+// Reuse the same store-population API used by Task 3's makeStoreWithFixtures.
+function makeStoreWithRow(): DocumentStore {
+  const store = new DocumentStore();
+  store.load([
+    makeDoc({
+      meta: {
+        doc_id: "projects-csv",
+        file_path: "data/projects.csv",
+        title: "Projects",
+        description: "Project tracking data",
+        collection: "rows",
+        facets: { format: ["csv"] },
+      },
+      tree: [
+        makeNode({
+          node_id: "header",
+          title: "Projects",
+          level: 1,
+          parent_id: null,
+          children: ["PROJ-44"],
+          content: "Project tracking table",
+          summary: "Project tracking table",
+          word_count: 3,
+          line_start: 1,
+          line_end: 1,
+        }),
+        makeNode({
+          node_id: "PROJ-44",
+          title: "PROJ-44 — Authentication Service Upgrade",
+          level: 2,
+          parent_id: "header",
+          children: [],
+          content: "Upgrade OAuth library to 3.0 for better security compliance.",
+          summary: "OAuth library upgrade for compliance",
+          word_count: 12,
+          line_start: 2,
+          line_end: 2,
+        }),
+      ],
+    }),
+  ]);
+  return store;
+}
