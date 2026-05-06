@@ -1,19 +1,21 @@
-# ADR 0001: LLM-Curated Wiki as a Write-Side Companion to treenav-mcp
+# ADR 0001: LLM-Curated Wiki as a Write-Side Companion to treenav
 
-**Status:** Proposed
+**Status:** Accepted — MVP shipped (find_similar, draft_wiki_entry, write_wiki_entry)
 **Date:** 2026-04-11
-**Deciders:** treenav-mcp maintainers
+**Deciders:** treenav maintainers
 **Related:** [docs/wiki-curation-spec.md](../wiki-curation-spec.md), [docs/COMPETITIVE-ANALYSIS.md](../COMPETITIVE-ANALYSIS.md), [docs/DESIGN.md](../DESIGN.md)
 
 ---
 
 ## Context
 
-treenav-mcp today is a **read-only** system. It indexes markdown and source
-code the user already wrote, then exposes BM25 search and hierarchical tree
-navigation via MCP. Its core architectural promise is *zero LLM calls at
-index or retrieval time* — every piece of intelligence lives in the
-*calling* agent (Claude Desktop, Claude Code, etc.).
+treenav today is a **read-only** system. It indexes markdown, source code,
+and structured data (CSV/JSONL) the user already wrote, then exposes BM25
+search, literal/regex grep, hierarchical tree navigation, and O(1) row
+lookup via MCP (or as an embeddable library). Its core architectural
+promise is *zero LLM calls at index or retrieval time* — every piece of
+intelligence lives in the *calling* agent (Claude Desktop, Claude Code,
+etc.).
 
 Andrej Karpathy has publicly advocated for a different consumption model
 for personal and organizational knowledge: an LLM acts as a **continuous
@@ -23,10 +25,10 @@ with frontmatter, tags, and cross-links; the wiki grows as a living graph
 rather than an append-only pile. Retrieval works *because* curation
 imposed structure — not because a vector DB papered over its absence.
 
-The two ideas are deeply complementary. treenav-mcp already supplies every
+The two ideas are deeply complementary. treenav already supplies every
 primitive a Karpathy-style wiki needs on the read side:
 
-| Karpathy wiki requirement | treenav-mcp today |
+| Karpathy wiki requirement | treenav today |
 |---|---|
 | Structured markdown with frontmatter | `src/indexer.ts` parses frontmatter; reserved-key policy enforces hygiene |
 | Dedupe check before writing | BM25 engine in `src/store.ts` |
@@ -48,7 +50,7 @@ opt-in capability.
 
 ## Decision
 
-We will add a **curation toolset** to treenav-mcp as an opt-in layer gated
+We will add a **curation toolset** to treenav as an opt-in layer gated
 behind a new `WIKI_WRITE=1` environment variable. The toolset exposes new
 MCP tools that let a calling agent perform Karpathy-style curation using
 its *own* LLM, while treenav enforces structural correctness
@@ -81,15 +83,15 @@ New reserved frontmatter keys for source attribution:
 
 ### What does **not** change
 
-- treenav-mcp still performs **zero LLM calls** in the index or retrieval
+- treenav still performs **zero LLM calls** in the index or retrieval
   path. The curation tools return structural data and validation results,
   not LLM-generated content.
 - Default behavior stays read-only. Absent `WIKI_WRITE=1`, the new tools
   are not registered and no write code path is reachable.
 - No new runtime dependencies (no ML models, no API clients).
-- The existing six read-side tools (`list_documents`, `search_documents`,
-  `get_tree`, `get_node_content`, `navigate_tree`, `find_symbol`) are
-  unchanged.
+- The existing read-side tools (currently 8: `list_documents`,
+  `search_documents`, `grep_documents`, `get_tree`, `get_node_content`,
+  `navigate_tree`, `lookup_row`, `find_symbol`) are unchanged.
 
 ---
 
@@ -97,7 +99,7 @@ New reserved frontmatter keys for source attribution:
 
 ### Positive
 
-- **Closes the loop.** treenav-mcp becomes both the *library* (read side)
+- **Closes the loop.** treenav becomes both the *library* (read side)
   and the *scaffolding that keeps the library tidy* (write side) for
   agent-driven knowledge bases.
 - **Philosophical coherence preserved.** Zero LLM calls inside treenav;
@@ -109,7 +111,7 @@ New reserved frontmatter keys for source attribution:
   PageIndex curates via LLM calls *inside* the index pipeline; QMD and
   docs-mcp-server are read-only; GitMCP and Context7 are cloud-only.
 - **Enterprise story strengthens.** Regulated environments that already
-  value treenav-mcp's offline, no-external-call posture can now use it
+  value treenav's offline, no-external-call posture can now use it
   as a curation surface without opening any new network holes.
 - **Composable.** The MVP (tools 1–3) is independently useful even if
   the later tools never ship.
@@ -128,7 +130,7 @@ New reserved frontmatter keys for source attribution:
   auto-`git add`, LLM-inside-treenav distillation, scheduled curation,
   web capture, etc. Mitigation: each request is evaluated against the
   zero-LLM-calls principle. Scheduled curation and web capture belong in
-  a sibling tool or the agent harness, not in treenav-mcp.
+  a sibling tool or the agent harness, not in treenav.
 - **Dedupe is approximate.** BM25 overlap cannot detect semantic
   duplication (same idea, different vocabulary). Users whose corpora
   have high vocabulary variance will still get near-duplicates. This is
@@ -146,7 +148,7 @@ New reserved frontmatter keys for source attribution:
 ## Alternatives considered
 
 ### A. Do nothing — stay read-only
-Keep treenav-mcp purely read-side and let users curate with any editor or
+Keep treenav purely read-side and let users curate with any editor or
 external tool.
 
 *Rejected because:* it misses an opportunity to complete a workflow that
@@ -156,12 +158,12 @@ frontmatter validation, tree model, glossary) — shipping them as MCP
 tools is a small lift relative to the workflow it unlocks. Leaving them
 unexposed forces every agent to reimplement them.
 
-### B. Embed an LLM inside treenav-mcp for curation
+### B. Embed an LLM inside treenav for curation
 Add a configurable LLM client (OpenAI, Anthropic, Ollama) that treenav
 calls during curation to generate summaries, tags, and cross-links.
 
 *Rejected because:* it violates the "zero LLM calls" principle that
-differentiates treenav-mcp from PageIndex, QMD, and docs-mcp-server. It
+differentiates treenav from PageIndex, QMD, and docs-mcp-server. It
 introduces runtime dependencies, API-key management, cost surface, and
 network requirements — all of which the project deliberately avoids.
 The calling agent already has an LLM; duplicating it inside treenav
@@ -212,7 +214,7 @@ is satisfied.
   (public posts on personal knowledge management and the "LLM OS" line
   of thinking).
 - [docs/COMPETITIVE-ANALYSIS.md](../COMPETITIVE-ANALYSIS.md) — positions
-  treenav-mcp against PageIndex and others; motivates the write-path
+  treenav against PageIndex and others; motivates the write-path
   differentiation.
 - [docs/DESIGN.md](../DESIGN.md) — existing architecture this layer
   builds on.

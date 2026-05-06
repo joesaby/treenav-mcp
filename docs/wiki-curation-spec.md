@@ -1,7 +1,7 @@
 # Wiki Curation Toolset — Specification
 
-**Status:** Draft
-**Target implementation:** `src/curator.ts`, `src/server.ts`, `src/store.ts`
+**Status:** MVP shipped (tools 4.1, 4.2, 4.3); §4.4–4.6 deferred — see §10.
+**Target implementation:** `src/curator.ts`, `src/tools.ts`, `src/store.ts`
 **Date:** 2026-04-11
 **ADR:** [adr/0001-llm-curated-wiki.md](./adr/0001-llm-curated-wiki.md)
 
@@ -10,12 +10,12 @@
 ## 1. Goals
 
 This spec defines the write-side toolset that lets an MCP-calling agent
-curate a Karpathy-style markdown wiki using treenav-mcp's existing
+curate a Karpathy-style markdown wiki using treenav's existing
 structural primitives. The goals are:
 
 1. **Enable Karpathy-style curation** — raw input in, structured,
    deduped, cross-linked markdown out.
-2. **Preserve "zero LLM calls" inside treenav-mcp** — all intelligence
+2. **Preserve "zero LLM calls" inside treenav** — all intelligence
    stays in the calling agent.
 3. **Fail safely** — no write path is reachable without opt-in, no write
    escapes `DOCS_ROOT`, every write is git-trackable.
@@ -24,7 +24,7 @@ structural primitives. The goals are:
 
 Non-goals:
 
-- Embedding an LLM client inside treenav-mcp.
+- Embedding an LLM client inside treenav.
 - Ingesting non-markdown raw sources (PDFs, HTML). Those belong in a
   sibling tool or in the calling agent.
 - Semantic deduplication (treenav continues to use BM25 overlap; this
@@ -49,8 +49,8 @@ default.
 
 When `WIKI_WRITE=1`:
 
-- The six existing read tools remain unchanged.
-- The five curation tools (§4) are registered.
+- The existing read tools (currently 8: `list_documents`, `search_documents`, `grep_documents`, `get_tree`, `get_node_content`, `navigate_tree`, `lookup_row`, `find_symbol`) remain unchanged.
+- The MVP curation tools `find_similar` (§4.1), `draft_wiki_entry` (§4.2), and `write_wiki_entry` (§4.3) are registered. §4.4–4.6 are deferred per §10.
 - `src/server.ts` logs a startup warning: `[wiki-write] write mode enabled; DOCS_ROOT is mutable`.
 
 ---
@@ -354,14 +354,14 @@ Deferred until MVP (tools 4.1–4.5) is validated by real use.
    1. find_similar(raw)
            ▼
 ┌─────────────────────┐
-│  treenav-mcp        │
+│  treenav            │
 │  BM25 engine        │───► returns top-N existing entries
 └──────────┬──────────┘
            │
    2. draft_wiki_entry(topic, raw)
            ▼
 ┌─────────────────────┐
-│  treenav-mcp        │
+│  treenav            │
 │  scaffold builder   │───► returns frontmatter + backlinks (no write)
 └──────────┬──────────┘
            │
@@ -370,7 +370,7 @@ Deferred until MVP (tools 4.1–4.5) is validated by real use.
    4. write_wiki_entry(path, frontmatter, content)
            ▼
 ┌─────────────────────┐
-│  treenav-mcp        │
+│  treenav            │
 │  validator + writer │───► writes file, incrementally re-indexes
 │                     │     returns new node_id
 └──────────┬──────────┘
@@ -378,7 +378,7 @@ Deferred until MVP (tools 4.1–4.5) is validated by real use.
    5. suggest_backlinks(new_node_id)
            ▼
 ┌─────────────────────┐
-│  treenav-mcp        │───► returns candidate entries to edit
+│  treenav            │───► returns candidate entries to edit
 └─────────────────────┘
            │
    6. [AGENT edits candidates via its own filesystem tool
@@ -431,7 +431,7 @@ Estimated net: one new source file (~250 lines), one new test file
    `WIKI_ROOT` / `GLOSSARY_PATH`.
 7. **Atomic glossary writes.** `update_glossary` writes to a temp file
    and renames, so a crash mid-write cannot corrupt `glossary.json`.
-8. **No LLM calls.** Reiterating the ADR: treenav-mcp performs zero LLM
+8. **No LLM calls.** Reiterating the ADR: treenav performs zero LLM
    inference in any curation code path. All tool outputs are
    deterministic functions of the current index state.
 
