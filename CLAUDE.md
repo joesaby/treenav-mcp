@@ -19,7 +19,7 @@ src/
 ├── types.ts          # All TypeScript interfaces and ranking defaults
 ├── tools.ts          # Shared MCP tool registration (read tools + optional curation)
 ├── prompts.ts        # MCP prompts for doc-read / doc-write / doc-lint workflows
-├── server.ts         # MCP stdio server (8 read tools + optional 3 curation tools)
+├── server.ts         # MCP stdio server (9 read tools + optional 3 curation tools)
 ├── server-http.ts    # MCP HTTP/Streamable HTTP server variant
 ├── cli-index.ts      # CLI debugging tool for inspecting indexed output
 ├── cli-init.ts       # `bunx treenav init` — wires up host config + skills
@@ -111,12 +111,13 @@ Read tools (always available):
 6. **`navigate_tree`** — Get a section and all descendants in one call
 7. **`lookup_row`** — O(1) key→row lookup for indexed CSV/JSONL data (e.g. `PROJ-44`, `ITEM-1234`)
 8. **`find_symbol`** — Search code symbols by name, kind (`class`/`function`/`interface`/etc.), and language (requires `CODE_ROOT`)
+9. **`compile_context`** — Composed retrieval. Single call returns ranked hits partitioned by source (docs/code/rows) plus outline trees for the top hits. Replaces the typical `search → get_tree → get_node_content` loop with one call. `mode='auto'` picks the right primitive (search / grep / lookup / symbol) from the intent shape.
 
 Curation tools (only when `WIKI_WRITE=1`):
 
-9.  **`find_similar`** — BM25 dedupe check for prospective content
-10. **`draft_wiki_entry`** — Structural scaffold for a new entry (no write)
-11. **`write_wiki_entry`** — Validated write + incremental re-index
+10. **`find_similar`** — BM25 dedupe check for prospective content
+11. **`draft_wiki_entry`** — Structural scaffold for a new entry (no write)
+12. **`write_wiki_entry`** — Validated write + incremental re-index
 
 ### CLI Wrappers
 

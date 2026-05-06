@@ -73,6 +73,30 @@ See [adr/0001-llm-curated-wiki.md](./adr/0001-llm-curated-wiki.md) and [wiki-cur
 
 ---
 
+## compile_context
+
+Single composed-retrieval tool. Use this to collapse the typical
+`search_documents → get_tree → get_node_content` loop into one call.
+
+Inputs (all optional except `intent`):
+- `intent` — the query (NL, literal, regex, key, or symbol).
+- `mode` — `auto` (default), `search`, `grep`, `lookup`, or `symbol`.
+- `sources` — array of `docs`, `code`, `rows`, or `all` (default).
+- `filters` — same facet filters as `search_documents`.
+- `output.top_k_per_source` — default 3, max 10.
+- `output.include_outlines_for_top` — default 2 (set 0 to disable).
+- `output.include_full_content_for_top` — default 0 (opt-in).
+- `output.max_tokens` — default 2000, max 8000.
+
+Returns a single text block with ranked hits per source, bundled outline
+trees for the top hits, a budget summary, and follow-up hints.
+
+See `docs/superpowers/specs/2026-05-06-compile-context-design.md` and
+`docs/adr/0002-multi-intent-out-of-scope.md` for the full design and
+rejected alternatives.
+
+---
+
 ## Multiple Collections
 
 Index multiple doc folders as weighted collections (Pagefind multisite style):
