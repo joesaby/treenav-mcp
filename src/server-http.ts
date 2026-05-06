@@ -8,14 +8,13 @@
  */
 
 import { existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { DocumentStore } from "./store";
 import { indexAllCollections } from "./indexer";
 import { singleRootConfig } from "./types";
 import type { IndexConfig } from "./types";
-import type { WikiOptions } from "./curator";
 import { registerTools } from "./tools";
 import { registerPrompts } from "./prompts";
 
@@ -51,20 +50,6 @@ const PORT = parseInt(process.env.PORT || "3100");
 
 const store = new DocumentStore();
 
-// ── Wiki configuration (opt-in) ─────────────────────────────────────
-
-let wiki: WikiOptions | undefined;
-if (process.env.WIKI_WRITE === "1") {
-  const wikiRoot = resolve(process.env.WIKI_ROOT || docs_root);
-  wiki = {
-    root: wikiRoot,
-    collectionName: "docs",
-    duplicateThreshold: parseFloat(
-      process.env.WIKI_DUPLICATE_THRESHOLD || "0.35"
-    ),
-  };
-}
-
 async function main() {
   console.log(`Indexing from ${docs_root}...`);
   const documents = await indexAllCollections(config);
@@ -86,10 +71,6 @@ async function main() {
     `Indexed: ${stats.document_count} docs, ${stats.total_nodes} sections`
   );
 
-  if (wiki) {
-    console.log(`Wiki write enabled — root: ${wiki.root}`);
-  }
-
   Bun.serve({
     port: PORT,
     async fetch(req) {
@@ -103,7 +84,7 @@ async function main() {
       }
 
       if (url.pathname === "/mcp") {
-        const server = createMcpServer(store, wiki);
+        const server = createMcpServer(store);
         const transport = new WebStandardStreamableHTTPServerTransport({
           sessionIdGenerator: undefined,
         });
@@ -121,14 +102,14 @@ async function main() {
 }
 
 /** Factory: creates a configured MCP server instance with all tools */
-function createMcpServer(store: DocumentStore, wiki?: WikiOptions): McpServer {
+function createMcpServer(store: DocumentStore): McpServer {
   const server = new McpServer({
     name: "treenav",
     version: "1.0.0",
   });
 
-  registerTools(server, store, { wiki });
-  registerPrompts(server, { wikiEnabled: !!wiki });
+  registerTools(server, store);
+  registerPrompts(server);
 
   return server;
 }

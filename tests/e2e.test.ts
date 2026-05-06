@@ -2,28 +2,18 @@
  * End-to-end integration tests.
  *
  * These tests exercise the full pipeline against real markdown files:
- * indexing → store loading → search → tree navigation → wiki curation.
+ * indexing → store loading → search → tree navigation.
  *
  * Uses the actual docs/ folder in the repo as test data.
  */
 
 import { describe, test, expect, beforeAll } from "bun:test";
-import { resolve, join } from "node:path";
-import { mkdtemp, rm, readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 
 import { indexAllCollections } from "../src/indexer";
 import { singleRootConfig } from "../src/types";
 import { DocumentStore } from "../src/store";
 import { formatSearchResults } from "../src/search-formatter";
-import {
-  findSimilar,
-  draftWikiEntry,
-  writeWikiEntry,
-  CuratorError,
-} from "../src/curator";
-import type { WikiOptions } from "../src/curator";
 
 // ── E2E: Index real docs/ folder ────────────────────────────────────
 
@@ -147,150 +137,6 @@ describe("E2E: real docs indexing", () => {
         // (unless it's a very long sentence with no early boundary)
         expect(node.summary.length).toBeLessThanOrEqual(201);
       }
-    }
-  });
-});
-
-// ── E2E: Wiki write cycle ───────────────────────────────────────────
-
-describe("E2E: wiki write cycle", () => {
-  let store: DocumentStore;
-  let tempDir: string;
-  let wiki: WikiOptions;
-
-  beforeAll(async () => {
-    // Create a temp wiki with some seed docs
-    tempDir = await mkdtemp(join(tmpdir(), "treenav-e2e-wiki-"));
-    store = new DocumentStore();
-
-    // Index our real docs as the base
-    const docsRoot = resolve(__dirname, "../docs");
-    const config = singleRootConfig(docsRoot);
-    const documents = await indexAllCollections(config);
-    store.load(documents);
-
-    wiki = {
-      root: tempDir,
-      collectionName: "wiki",
-      duplicateThreshold: 0.35,
-    };
-  });
-
-  test("full cycle: find_similar → draft → dry_run → write → search", async () => {
-    const newContent = `# Deployment Checklist
-
-## Pre-deploy Verification
-
-Before deploying to production, verify:
-1. All tests pass in CI
-2. Database migrations are reviewed
-3. Feature flags are configured
-
-## Rollback Plan
-
-If deployment fails, use the rollback procedure documented in the runbook.
-`;
-
-    // Step 1: Check for similar docs
-    const similar = findSimilar(store, newContent);
-    expect(typeof similar.suggest_merge).toBe("boolean");
-    expect(Array.isArray(similar.matches)).toBe(true);
-
-    // Step 2: Draft the entry
-    const draft = draftWikiEntry(store, wiki, {
-      topic: "Deployment Checklist",
-      raw_content: newContent,
-    });
-    expect(draft.suggested_path).toContain("deployment-checklist");
-    expect(draft.frontmatter.title).toBe("Deployment Checklist");
-
-    // Step 3: Dry run
-    const dryResult = await writeWikiEntry(store, wiki, {
-      path: "runbooks/deploy-checklist.md",
-      frontmatter: {
-        title: "Deployment Checklist",
-        type: "runbook",
-        tags: ["deploy", "checklist"],
-      },
-      content: newContent,
-      dry_run: true,
-    });
-    expect(dryResult.written).toBe(false);
-    expect(existsSync(dryResult.absolute_path)).toBe(false);
-
-    // Step 4: Actually write
-    const writeResult = await writeWikiEntry(store, wiki, {
-      path: "runbooks/deploy-checklist.md",
-      frontmatter: {
-        title: "Deployment Checklist",
-        type: "runbook",
-        tags: ["deploy", "checklist"],
-      },
-      content: newContent,
-    });
-    expect(writeResult.written).toBe(true);
-    expect(existsSync(writeResult.absolute_path)).toBe(true);
-
-    // Verify file content
-    const written = await readFile(writeResult.absolute_path, "utf-8");
-    expect(written).toContain("Deployment Checklist");
-    expect(written).toMatch(/type:\s*"?runbook"?/);
-
-    // Step 5: The doc should now be searchable (incremental re-index)
-    expect(store.hasDocument(writeResult.doc_id)).toBe(true);
-
-    const searchResults = store.searchDocuments("deployment checklist rollback");
-    const found = searchResults.some((r) => r.doc_id === writeResult.doc_id);
-    expect(found).toBe(true);
-  });
-
-  test("write → overwrite cycle preserves search index", async () => {
-    // Write initial version
-    await writeWikiEntry(store, wiki, {
-      path: "guides/test-overwrite.md",
-      frontmatter: { title: "Original Title" },
-      content: "# Original\n\nOriginal content about monitoring alerts.",
-      allow_duplicate: true,
-    });
-
-    const doc_id = "wiki:guides:test-overwrite";
-    expect(store.hasDocument(doc_id)).toBe(true);
-
-    // Overwrite with updated content
-    await writeWikiEntry(store, wiki, {
-      path: "guides/test-overwrite.md",
-      frontmatter: { title: "Updated Title" },
-      content: "# Updated\n\nUpdated content about dashboard metrics.",
-      overwrite: true,
-      allow_duplicate: true,
-    });
-
-    // Should still be in index with new content
-    expect(store.hasDocument(doc_id)).toBe(true);
-
-    const meta = store.getDocMeta(doc_id);
-    expect(meta).not.toBeNull();
-    expect(meta!.title).toBe("Updated Title");
-  });
-
-  test("path containment prevents escape", async () => {
-    try {
-      await writeWikiEntry(store, wiki, {
-        path: "../../etc/evil.md",
-        frontmatter: { title: "Evil" },
-        content: "bad",
-      });
-      expect(true).toBe(false); // should not reach here
-    } catch (err: any) {
-      expect(err).toBeInstanceOf(CuratorError);
-      expect(err.code).toBe("PATH_ESCAPE");
-    }
-  });
-
-  // Cleanup
-  test("cleanup temp directory", async () => {
-    if (tempDir) {
-      await rm(tempDir, { recursive: true, force: true });
     }
   });
 });

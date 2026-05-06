@@ -378,7 +378,7 @@ walk the directory tree and read files speculatively to find content.
   treenav understands markdown headings, source-code symbols (class,
   function, interface, etc.), and CSV/JSONL row keys.
 - **MCP support.** Both are MCP servers. Filesystem MCP also exposes write
-  tools by default; treenav's write surface is opt-in (`WIKI_WRITE=1`).
+  tools by default; treenav is read-only.
 - **Library use.** Filesystem MCP is server-only. treenav is also importable
   as a TypeScript library.
 - **Latency.** Comparable for any single operation — both are local I/O.

@@ -58,21 +58,6 @@ CODE_ROOT=./src CODE_WEIGHT=0.8 bun run serve
 
 ---
 
-## Wiki curation (opt-in write tools)
-
-The curation toolset (`find_similar`, `draft_wiki_entry`, `write_wiki_entry`) is gated behind a single env var and is **off by default**. When unset, treenav stays read-only and these tools are not registered with the MCP server.
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `WIKI_WRITE` | *(unset)* | Set to `1` to enable the write-side curation toolset (`find_similar`, `draft_wiki_entry`, `write_wiki_entry`). |
-| `WIKI_ROOT` | `$DOCS_ROOT` | Filesystem root that curated entries must live under. Writes outside this path are rejected. |
-| `WIKI_DUPLICATE_THRESHOLD` | `0.35` | Overlap ratio above which writes warn and require `allow_duplicate=true`. |
-| `LINT_MIN_WORDS` | `100` | `treenav lint` flags any wiki entry below this word count as a stub. |
-
-See [adr/0001-llm-curated-wiki.md](./adr/0001-llm-curated-wiki.md) and [wiki-curation-spec.md](./wiki-curation-spec.md) for the full design.
-
----
-
 ## Multiple Collections
 
 Index multiple doc folders as weighted collections (Pagefind multisite style):
