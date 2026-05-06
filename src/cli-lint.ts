@@ -3,7 +3,7 @@
  * Called by AI tool hooks after write_wiki_entry.
  *
  * Usage:
- *   bunx treenav-lint
+ *   bunx treenav lint
  *
  * Env vars:
  *   WIKI_ROOT       — directory to scan (default: ./docs/wiki, fallback: DOCS_ROOT)

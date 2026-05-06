@@ -83,6 +83,7 @@ A GitHub Release is created automatically with generated release notes. Docker H
 | `WIKI_WRITE` | *(unset)* | Set to `1` to enable the write-side curation toolset (find_similar, draft_wiki_entry, write_wiki_entry). Off by default. |
 | `WIKI_ROOT` | `$DOCS_ROOT` | Filesystem root that curated entries must live under. Writes outside this path are rejected. |
 | `WIKI_DUPLICATE_THRESHOLD` | `0.35` | Overlap ratio above which writes warn and require `allow_duplicate=true`. |
+| `LINT_MIN_WORDS` | `100` | `treenav lint` flags any wiki entry below this word count as a stub. |
 
 ### Glossary File Format
 
