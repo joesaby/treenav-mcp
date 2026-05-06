@@ -44,3 +44,48 @@ describe("compile_context types", () => {
     expect(result.resolved_mode).toBe("search");
   });
 });
+
+import { resolveMode } from "../src/compile-context";
+
+describe("resolveMode (auto heuristic)", () => {
+  // Lookup-shaped: ALL_CAPS-DIGITS pattern
+  test.each([
+    ["PROJ-44", "lookup"],
+    ["INC-104", "lookup"],
+    ["ITEM-1234", "lookup"],
+  ])("%s -> lookup", (q, expected) => {
+    expect(resolveMode(q)).toBe(expected);
+  });
+
+  // Regex-shaped: contains regex metacharacters
+  test.each([
+    ["^class.*Service$", "grep"],
+    ["foo\\sbar", "grep"],
+    ["[A-Z]+", "grep"],
+    ["foo|bar", "grep"],
+    ["(?:foo)", "grep"],
+  ])("%s -> grep", (q, expected) => {
+    expect(resolveMode(q)).toBe(expected);
+  });
+
+  // Symbol-shaped: starts with class/function/interface, or camelCase token
+  test.each([
+    ["class AuthService", "symbol"],
+    ["function parseAuthHeader", "symbol"],
+    ["interface UserRepository", "symbol"],
+    ["parseAuthHeader", "symbol"],
+    ["AuthService", "symbol"],
+  ])("%s -> symbol", (q, expected) => {
+    expect(resolveMode(q)).toBe(expected);
+  });
+
+  // Default: natural-language → search
+  test.each([
+    ["how do we rotate tokens", "search"],
+    ["auth token rotation", "search"],
+    ["incident response runbook", "search"],
+    ["", "search"],
+  ])("%s -> search", (q, expected) => {
+    expect(resolveMode(q)).toBe(expected);
+  });
+});
