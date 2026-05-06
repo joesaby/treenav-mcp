@@ -7,7 +7,12 @@
  * See docs/superpowers/specs/2026-05-06-compile-context-design.md.
  */
 
-import type { ResolvedMode } from "./types";
+import type {
+  ResolvedMode,
+  CompileContextHit,
+  ResolvedSource,
+} from "./types";
+import type { DocumentStore } from "./store";
 
 const LOOKUP_KEY_RE = /^[A-Z]+-\d+$/;
 const REGEX_META_RE = /[\\\[\]^$|]|\.\*|\(\?/;
@@ -37,4 +42,33 @@ export function resolveMode(intent: string): ResolvedMode {
     return "symbol";
   }
   return "search";
+}
+
+/**
+ * Dispatch a BM25 search against a single source collection.
+ * Returns up to topK hits, each tagged with the source.
+ */
+export function dispatchSearch(
+  store: DocumentStore,
+  intent: string,
+  source: "docs" | "code",
+  filters: Record<string, string | string[]> | undefined,
+  topK: number
+): CompileContextHit[] {
+  const collection = source === "docs" ? "docs" : "code";
+  const results = store.searchDocuments(intent, {
+    limit: topK,
+    collection,
+    filters,
+  });
+  return results.map((r) => ({
+    source,
+    doc_id: r.doc_id,
+    node_id: r.node_id,
+    doc_title: r.doc_title,
+    node_title: r.node_title,
+    file_path: r.file_path,
+    score: r.score,
+    snippet: r.snippet || undefined,
+  }));
 }

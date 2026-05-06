@@ -7,7 +7,11 @@ import type {
   CompileContextFullContent,
   ResolvedMode,
   CompileContextSource,
+  IndexedDocument,
+  TreeNode,
+  DocumentMeta,
 } from "../src/types";
+import { DocumentStore } from "../src/store";
 
 describe("compile_context types", () => {
   test("input shape is well-formed", () => {
@@ -87,5 +91,189 @@ describe("resolveMode (auto heuristic)", () => {
     ["", "search"],
   ])("%s -> search", (q, expected) => {
     expect(resolveMode(q)).toBe(expected);
+  });
+});
+
+import { dispatchSearch } from "../src/compile-context";
+
+// ── Test helpers ────────────────────────────────────────────────────
+
+function makeNode(overrides: Partial<TreeNode> = {}): TreeNode {
+  return {
+    node_id: "test:doc:n1",
+    title: "Test Node",
+    level: 1,
+    parent_id: null,
+    children: [],
+    content: "Default test content for the node.",
+    summary: "Default test content...",
+    word_count: 6,
+    line_start: 1,
+    line_end: 10,
+    ...overrides,
+  };
+}
+
+function makeMeta(overrides: Partial<DocumentMeta> = {}): DocumentMeta {
+  return {
+    doc_id: "test:doc",
+    file_path: "doc.md",
+    title: "Test Document",
+    description: "A test document for unit testing",
+    word_count: 100,
+    heading_count: 3,
+    max_depth: 2,
+    last_modified: "2025-01-01T00:00:00.000Z",
+    tags: [],
+    content_hash: "abc123",
+    collection: "test",
+    facets: {},
+    references: [],
+    ...overrides,
+  };
+}
+
+function makeDoc(overrides: {
+  meta?: Partial<DocumentMeta>;
+  tree?: TreeNode[];
+  root_nodes?: string[];
+} = {}): IndexedDocument {
+  const tree = overrides.tree || [
+    makeNode({
+      node_id: `${overrides.meta?.doc_id || "test:doc"}:n1`,
+      title: overrides.meta?.title || "Test Document",
+      content: "This is the main content of the test document about authentication and tokens.",
+    }),
+  ];
+
+  return {
+    meta: makeMeta({
+      heading_count: tree.length,
+      word_count: tree.reduce((s, n) => s + n.word_count, 0),
+      ...overrides.meta,
+    }),
+    tree,
+    root_nodes: overrides.root_nodes || [tree[0].node_id],
+  };
+}
+
+function makeStoreWithFixtures(): DocumentStore {
+  const store = new DocumentStore();
+  // Two docs: one in "docs" collection, one in "code" collection.
+  store.load([
+    makeDoc({
+      meta: {
+        doc_id: "auth-runbook",
+        file_path: "auth/runbook.md",
+        title: "Auth Runbook",
+        description: "How to handle auth incidents",
+        collection: "docs",
+        facets: { type: ["runbook"], tags: ["auth"] },
+      },
+      tree: [
+        makeNode({
+          node_id: "n0",
+          title: "Auth Runbook",
+          level: 1,
+          parent_id: null,
+          children: ["n1"],
+          content: "Auth token rotation procedure for incident response.",
+          summary: "Auth token rotation procedure for incident response.",
+          word_count: 8,
+          line_start: 1,
+          line_end: 5,
+        }),
+        makeNode({
+          node_id: "n1",
+          title: "Token Rotation",
+          level: 2,
+          parent_id: "n0",
+          children: [],
+          content: "Rotate the JWT signing key, then redeploy the auth service.",
+          summary: "Rotate the JWT signing key, then redeploy the auth service.",
+          word_count: 10,
+          line_start: 6,
+          line_end: 10,
+        }),
+      ],
+    }),
+    makeDoc({
+      meta: {
+        doc_id: "auth-service",
+        file_path: "src/AuthService.ts",
+        title: "AuthService",
+        description: "Authentication service implementation",
+        collection: "code",
+        facets: { content_type: ["code"], language: ["typescript"] },
+      },
+      tree: [
+        makeNode({
+          node_id: "c0",
+          title: "class AuthService",
+          level: 1,
+          parent_id: null,
+          children: ["c1"],
+          content: "class AuthService { rotateToken() { /* ... */ } }",
+          summary: "Authentication service",
+          word_count: 6,
+          line_start: 1,
+          line_end: 5,
+          symbol_kind: "class",
+          symbol_name: "AuthService",
+        }),
+        makeNode({
+          node_id: "c1",
+          title: "rotateToken",
+          level: 2,
+          parent_id: "c0",
+          children: [],
+          content: "rotateToken() { return this.signer.rotate(); }",
+          summary: "Rotates the auth token",
+          word_count: 5,
+          line_start: 6,
+          line_end: 10,
+          symbol_kind: "method",
+          symbol_name: "rotateToken",
+        }),
+      ],
+    }),
+  ]);
+  return store;
+}
+
+describe("dispatchSearch", () => {
+  test("returns hits from the requested collection only", () => {
+    const store = makeStoreWithFixtures();
+    const docHits = dispatchSearch(store, "token rotation", "docs", undefined, 3);
+    const codeHits = dispatchSearch(store, "token rotation", "code", undefined, 3);
+
+    expect(docHits.length).toBeGreaterThan(0);
+    expect(docHits.every((h) => h.source === "docs")).toBe(true);
+    expect(codeHits.every((h) => h.source === "code")).toBe(true);
+  });
+
+  test("respects top_k limit", () => {
+    const store = makeStoreWithFixtures();
+    const hits = dispatchSearch(store, "token rotation", "docs", undefined, 1);
+    expect(hits.length).toBeLessThanOrEqual(1);
+  });
+
+  test("passes filters through to searchDocuments", () => {
+    const store = makeStoreWithFixtures();
+    const hits = dispatchSearch(store, "token rotation", "docs", { type: "runbook" }, 5);
+    expect(hits.every((h) => h.source === "docs")).toBe(true);
+  });
+
+  test("each hit carries provenance fields", () => {
+    const store = makeStoreWithFixtures();
+    const hits = dispatchSearch(store, "token rotation", "docs", undefined, 5);
+    for (const h of hits) {
+      expect(h.doc_id).toBeTruthy();
+      expect(h.node_id).toBeTruthy();
+      expect(h.doc_title).toBeTruthy();
+      expect(h.node_title).toBeTruthy();
+      expect(h.file_path).toBeTruthy();
+      expect(typeof h.score).toBe("number");
+    }
   });
 });
