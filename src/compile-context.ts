@@ -229,7 +229,7 @@ export function collectFullContent(
   return blocks;
 }
 
-import type { CompileContextResult } from "./types";
+import type { CompileContextResult, CompileContextInput } from "./types";
 
 const SOURCE_ORDER: ResolvedSource[] = ["docs", "code", "rows"];
 
@@ -422,6 +422,107 @@ export function trimToBudget(
 
   r.tokens_used_estimate = estimateResultTokens(r);
   return r;
+}
+
+const DEFAULT_TOP_K = 3;
+const DEFAULT_OUTLINES = 2;
+const DEFAULT_FULL_CONTENT = 0;
+const DEFAULT_MAX_TOKENS = 2000;
+
+function expandSources(
+  sources: CompileContextInput["sources"]
+): ResolvedSource[] {
+  if (!sources || sources.length === 0) return ["docs", "code", "rows"];
+  if (sources.includes("all")) return ["docs", "code", "rows"];
+  return sources.filter((s): s is ResolvedSource => s !== "all");
+}
+
+/**
+ * Top-level entrypoint. Resolves mode, dispatches per source, collects
+ * outlines + full content, applies budget, and renders.
+ *
+ * Returns both the structured result (for callers that want the data)
+ * and the rendered text (for the MCP tool's text response).
+ */
+export function compileContext(
+  store: DocumentStore,
+  input: CompileContextInput
+): { result: CompileContextResult; text: string } {
+  const t0 = Date.now();
+  const resolvedMode: ResolvedMode =
+    !input.mode || input.mode === "auto"
+      ? resolveMode(input.intent)
+      : input.mode;
+  const sources = expandSources(input.sources);
+  const topK = input.output.top_k_per_source ?? DEFAULT_TOP_K;
+  const outlinesTop = input.output.include_outlines_for_top ?? DEFAULT_OUTLINES;
+  const fullContentTop = input.output.include_full_content_for_top ?? DEFAULT_FULL_CONTENT;
+  const maxTokens = input.output.max_tokens ?? DEFAULT_MAX_TOKENS;
+
+  const hitsBySource: Record<ResolvedSource, CompileContextHit[]> = {
+    docs: [],
+    code: [],
+    rows: [],
+  };
+  const totalsBySource: Record<ResolvedSource, number> = {
+    docs: 0,
+    code: 0,
+    rows: 0,
+  };
+
+  // Lookup mode is row-only regardless of requested sources.
+  if (resolvedMode === "lookup") {
+    const hits = dispatchLookup(store, input.intent);
+    hitsBySource.rows = hits;
+    totalsBySource.rows = hits.length;
+  } else {
+    for (const src of sources) {
+      if (src === "rows") {
+        // Search/grep/symbol modes don't address rows.
+        continue;
+      }
+      let hits: CompileContextHit[] = [];
+      if (resolvedMode === "search") {
+        hits = dispatchSearch(store, input.intent, src, input.filters, topK);
+      } else if (resolvedMode === "grep") {
+        hits = dispatchGrep(store, input.intent, src, input.filters, topK);
+      } else if (resolvedMode === "symbol") {
+        if (src === "code") {
+          hits = dispatchSymbol(store, input.intent, input.filters, topK);
+        }
+      }
+      hitsBySource[src] = hits;
+      totalsBySource[src] = hits.length;
+    }
+  }
+
+  // Merge hits in source order for outline + full-content collection.
+  const merged: CompileContextHit[] = [];
+  for (const s of SOURCE_ORDER) {
+    merged.push(...hitsBySource[s]);
+  }
+
+  const outlines = collectOutlines(store, merged, outlinesTop);
+  const full_content = collectFullContent(store, merged, fullContentTop);
+
+  const rawResult: CompileContextResult = {
+    intent: input.intent,
+    resolved_mode: resolvedMode,
+    sources,
+    duration_ms: Date.now() - t0,
+    hits_by_source: hitsBySource,
+    hit_totals_by_source: totalsBySource,
+    outlines,
+    full_content,
+    trim_notes: [],
+    tokens_used_estimate: 0,
+    tokens_budget: maxTokens,
+  };
+  rawResult.tokens_used_estimate = estimateResultTokens(rawResult);
+
+  const trimmed = trimToBudget(rawResult, maxTokens);
+  const text = formatResult(trimmed);
+  return { result: trimmed, text };
 }
 
 /**

@@ -588,3 +588,68 @@ describe("trimToBudget", () => {
     expect(trimmed.outlines.length).toBeLessThan(r.outlines.length);
   });
 });
+
+import { compileContext } from "../src/compile-context";
+
+describe("compileContext (top-level)", () => {
+  test("returns result + text for search-mode docs query", () => {
+    const store = makeStoreWithFixtures();
+    const { result, text } = compileContext(store, {
+      intent: "token rotation",
+      mode: "search",
+      sources: ["docs"],
+      output: { top_k_per_source: 3, max_tokens: 2000 },
+    });
+    expect(result.resolved_mode).toBe("search");
+    expect(result.sources).toEqual(["docs"]);
+    expect(result.hits_by_source.docs.length).toBeGreaterThan(0);
+    expect(text).toContain("## Hits — docs");
+  });
+
+  test("auto mode resolves correctly", () => {
+    const store = makeStoreWithFixtures();
+    const { result } = compileContext(store, {
+      intent: "AuthService",
+      mode: "auto",
+      sources: ["all"],
+      output: { top_k_per_source: 3, max_tokens: 2000 },
+    });
+    expect(result.resolved_mode).toBe("symbol");
+  });
+
+  test("'all' sources expands to docs + code + rows", () => {
+    const store = makeStoreWithFixtures();
+    const { result } = compileContext(store, {
+      intent: "token rotation",
+      sources: ["all"],
+      output: { top_k_per_source: 3, max_tokens: 2000 },
+    });
+    expect(result.sources).toEqual(["docs", "code", "rows"]);
+  });
+
+  test("outlines included for top hits when requested", () => {
+    const store = makeStoreWithFixtures();
+    const { result } = compileContext(store, {
+      intent: "token rotation",
+      sources: ["docs"],
+      output: { top_k_per_source: 3, include_outlines_for_top: 1, max_tokens: 2000 },
+    });
+    expect(result.outlines.length).toBeGreaterThan(0);
+  });
+
+  test("output is deterministic across repeat calls (modulo timing)", () => {
+    const store = makeStoreWithFixtures();
+    const { text: t1 } = compileContext(store, {
+      intent: "token rotation",
+      sources: ["docs"],
+      output: { top_k_per_source: 3, max_tokens: 2000 },
+    });
+    const { text: t2 } = compileContext(store, {
+      intent: "token rotation",
+      sources: ["docs"],
+      output: { top_k_per_source: 3, max_tokens: 2000 },
+    });
+    const stripTiming = (s: string) => s.replace(/, \d+ ms\)/, ", X ms)");
+    expect(stripTiming(t1)).toBe(stripTiming(t2));
+  });
+});
