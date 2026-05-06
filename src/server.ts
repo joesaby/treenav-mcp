@@ -93,22 +93,13 @@ if (process.env.WIKI_WRITE === "1") {
 }
 
 // ── Register tools, prompts, resources ──────────────────────────────
+//
+// `registerTools` also registers the `md-tree://stats` resource so the
+// stdio (this file) and HTTP (server-http.ts) entrypoints stay aligned —
+// don't re-register it here.
 
 registerTools(server, store, { wiki });
 registerPrompts(server, { wikiEnabled: !!wiki });
-
-server.resource("index-stats", "md-tree://stats", async (uri) => {
-  const stats = store.getStats();
-  return {
-    contents: [
-      {
-        uri: uri.href,
-        mimeType: "application/json",
-        text: JSON.stringify(stats, null, 2),
-      },
-    ],
-  };
-});
 
 // ── Startup ──────────────────────────────────────────────────────────
 
