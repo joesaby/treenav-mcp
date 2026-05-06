@@ -96,3 +96,37 @@ export function dispatchLookup(
     },
   ];
 }
+
+/**
+ * Dispatch a literal/regex scan against a single source.
+ * Maps GrepHits onto the unified CompileContextHit shape.
+ */
+export function dispatchGrep(
+  store: DocumentStore,
+  intent: string,
+  source: "docs" | "code",
+  filters: Record<string, string | string[]> | undefined,
+  topK: number
+): CompileContextHit[] {
+  // Treat regex if it contains regex metacharacters; otherwise literal.
+  const regex = /[\\\[\]^$|]|\.\*|\(\?/.test(intent);
+  const outcome = store.grepDocuments({
+    pattern: intent,
+    regex,
+    case_insensitive: false,
+    filters,
+    context: 0,
+    limit: topK,
+  });
+  return outcome.hits.map((h) => ({
+    source,
+    doc_id: h.doc_id,
+    node_id: h.node_id,
+    doc_title: h.doc_id,
+    node_title: h.node_title,
+    file_path: h.file_path,
+    score: 1.0,
+    snippet: h.line,
+    line_no: h.line_no,
+  }));
+}

@@ -340,3 +340,21 @@ function makeStoreWithRow(): DocumentStore {
   ]);
   return store;
 }
+
+import { dispatchGrep } from "../src/compile-context";
+
+describe("dispatchGrep", () => {
+  test("returns matches as hits with line_no", () => {
+    const store = makeStoreWithFixtures();
+    const hits = dispatchGrep(store, "rotateToken", "code", undefined, 5);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.every((h) => h.source === "code")).toBe(true);
+    expect(hits.every((h) => typeof h.line_no === "number")).toBe(true);
+  });
+
+  test("respects top_k limit", () => {
+    const store = makeStoreWithFixtures();
+    const hits = dispatchGrep(store, "rotateToken", "code", undefined, 1);
+    expect(hits.length).toBeLessThanOrEqual(1);
+  });
+});
