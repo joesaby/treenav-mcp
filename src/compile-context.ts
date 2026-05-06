@@ -112,7 +112,7 @@ export function dispatchGrep(
   topK: number
 ): CompileContextHit[] {
   // Treat regex if it contains regex metacharacters; otherwise literal.
-  const regex = /[\\\[\]^$|]|\.\*|\(\?/.test(intent);
+  const regex = REGEX_META_RE.test(intent);
   const outcome = store.grepDocuments({
     pattern: intent,
     regex,
@@ -121,13 +121,22 @@ export function dispatchGrep(
     context: 0,
     limit: topK,
   });
+  // Cache doc titles to avoid repeated getTree calls for same doc_id.
+  const titleCache = new Map<string, string>();
+  const titleFor = (docId: string): string => {
+    if (!titleCache.has(docId)) {
+      titleCache.set(docId, store.getTree(docId)?.title ?? docId);
+    }
+    return titleCache.get(docId)!;
+  };
   return outcome.hits.map((h) => ({
     source,
     doc_id: h.doc_id,
     node_id: h.node_id,
-    doc_title: h.doc_id,
+    doc_title: titleFor(h.doc_id),
     node_title: h.node_title,
     file_path: h.file_path,
+    // Grep has no ranking; score is a placeholder, ordering preserved by hit position.
     score: 1.0,
     snippet: h.line,
     line_no: h.line_no,

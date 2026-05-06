@@ -357,6 +357,16 @@ describe("dispatchGrep", () => {
     const hits = dispatchGrep(store, "rotateToken", "code", undefined, 1);
     expect(hits.length).toBeLessThanOrEqual(1);
   });
+
+  test("doc_title is the actual document title, not the doc_id", () => {
+    const store = makeStoreWithFixtures();
+    const hits = dispatchGrep(store, "rotateToken", "code", undefined, 5);
+    expect(hits.length).toBeGreaterThan(0);
+    // The fixture sets title: "AuthService" for the code doc with doc_id: "auth-service"
+    expect(hits.every((h) => h.doc_title === "AuthService")).toBe(true);
+    // Verify it's not just the doc_id
+    expect(hits.some((h) => h.doc_id !== h.doc_title)).toBe(true);
+  });
 });
 
 import { dispatchSymbol } from "../src/compile-context";
