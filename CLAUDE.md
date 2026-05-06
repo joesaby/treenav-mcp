@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-treenav is an MCP (Model Context Protocol) server that provides BM25 search, literal/regex grep, and hierarchical tree navigation over markdown documentation, source code, and structured data (CSV/JSONL). Agents get a table of contents they can reason over — for docs, code, and tabular data — then retrieve only the sections, symbols, or rows they need. Supports AST-based code navigation for TypeScript, Python, Go, Rust, Java, C/C++, and more. No vector DB, no embeddings, no LLM calls at index or retrieval time.
+treenav is a local search backend for code, docs, and structured data that AI agents can navigate. Available as an MCP server (`treenav serve`), an HTTP service (`treenav serve:http`), or a TypeScript library you import into your own MCP server. It provides BM25 search, literal/regex grep, hierarchical tree navigation, and O(1) row lookup over markdown documentation, source code, and CSV/JSONL data. Agents get a table of contents they can reason over — for docs, code, and tabular data — then retrieve only the sections, symbols, or rows they need. Supports AST-based code navigation for TypeScript, Python, Go, Rust, Java, C/C++, and more. No vector DB, no embeddings, no LLM calls at index or retrieval time.
 
 ## Architecture
 

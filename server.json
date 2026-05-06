@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.joesaby/treenav",
-  "description": "BM25 search + tree navigation over markdown docs for AI agents. No embeddings, no LLM calls.",
+  "description": "Local BM25 + AST tree-navigation search backend for code and docs, for AI agents. MCP server or embeddable TypeScript library. No embeddings, no vector DB, no LLM calls.",
   "repository": {
     "url": "https://github.com/joesaby/treenav",
     "source": "github"
