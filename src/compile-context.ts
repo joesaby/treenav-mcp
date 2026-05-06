@@ -130,3 +130,34 @@ export function dispatchGrep(
     line_no: h.line_no,
   }));
 }
+
+/**
+ * Dispatch a symbol search — search restricted to code collection,
+ * with optional kind/language filters layered on caller filters.
+ * Mirrors the existing find_symbol tool's filter strategy.
+ */
+export function dispatchSymbol(
+  store: DocumentStore,
+  intent: string,
+  filters: Record<string, string | string[]> | undefined,
+  topK: number
+): CompileContextHit[] {
+  const mergedFilters: Record<string, string | string[]> = {
+    content_type: "code",
+    ...(filters ?? {}),
+  };
+  const results = store.searchDocuments(intent, {
+    limit: topK,
+    filters: mergedFilters,
+  });
+  return results.map((r) => ({
+    source: "code" as const,
+    doc_id: r.doc_id,
+    node_id: r.node_id,
+    doc_title: r.doc_title,
+    node_title: r.node_title,
+    file_path: r.file_path,
+    score: r.score,
+    signature: r.snippet || undefined,
+  }));
+}

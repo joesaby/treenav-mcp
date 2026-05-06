@@ -358,3 +358,20 @@ describe("dispatchGrep", () => {
     expect(hits.length).toBeLessThanOrEqual(1);
   });
 });
+
+import { dispatchSymbol } from "../src/compile-context";
+
+describe("dispatchSymbol", () => {
+  test("returns code hits with signature when available", () => {
+    const store = makeStoreWithFixtures();
+    const hits = dispatchSymbol(store, "AuthService", undefined, 5);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.every((h) => h.source === "code")).toBe(true);
+  });
+
+  test("returns empty when no symbol matches", () => {
+    const store = makeStoreWithFixtures();
+    const hits = dispatchSymbol(store, "NonexistentSymbolXYZ", undefined, 5);
+    expect(hits).toEqual([]);
+  });
+});
