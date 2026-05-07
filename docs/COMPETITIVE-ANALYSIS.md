@@ -16,10 +16,9 @@ day to day; treat them as "approximately N as of verification" rather
 than precise figures. Where benchmark numbers are vendor-published and
 not independently verified, they are flagged **[vendor-claimed]**.
 
-For the underlying research drafts that informed this document — Claude's
-landscape pass, the codex verification pass, and the codex final
-analysis with high-confidence corrections — see the artifacts in
-[`docs/research/`](./research/).
+For the prompt used to drive the May 2026 verification pass — and that
+should drive the next refresh — see
+[`docs/competitive-research-prompt.md`](./competitive-research-prompt.md).
 
 ---
 
