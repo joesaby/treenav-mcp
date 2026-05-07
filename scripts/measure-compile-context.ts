@@ -461,7 +461,7 @@ async function main(): Promise<void> {
     {
       const t1 = Date.now();
 
-      const { text } = compileContext(store, {
+      const { result, text } = compileContext(store, {
         intent: query,
         sources: ["all"],
         filters,
@@ -476,17 +476,21 @@ async function main(): Promise<void> {
       const bytes = Buffer.byteLength(text, "utf8");
       const latency_ms = Date.now() - t1;
 
-      // Extract top-5 result IDs from the compile_context result by re-running
-      // a lightweight search (compile_context doesn't expose the hit list via text).
-      const ccResults = store.searchDocuments(query, { limit: 5, filters });
-      const top5 = ccResults
+      // Extract top-5 result IDs from compileContext's actual ranking
+      // (merge hits_by_source in source order, re-sort by score descending).
+      const allHits = [
+        ...result.hits_by_source.docs,
+        ...result.hits_by_source.code,
+        ...result.hits_by_source.rows,
+      ].sort((a, b) => b.score - a.score);
+      const top5 = allHits
         .slice(0, 5)
-        .map((r) => `${r.doc_id}#${r.node_id}`)
+        .map((h) => `${h.doc_id}#${h.node_id}`)
         .join(";");
 
       let ndcg_at_10: number | null = null;
       if (qrelSet) {
-        const ranked = ccResults.map((r) => `${r.doc_id}#${r.node_id}`);
+        const ranked = allHits.map((h) => `${h.doc_id}#${h.node_id}`);
         ndcg_at_10 = ndcgAtK(ranked, qrelSet, 10);
         acc.compile_context.ndcgSum += ndcg_at_10;
         acc.compile_context.ndcgN++;
