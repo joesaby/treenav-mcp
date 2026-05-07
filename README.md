@@ -14,7 +14,7 @@ BM25 search, literal/regex grep, AST-based tree navigation, and O(1) row lookup 
 
 ## How it works
 
-The same six tools work identically on markdown docs and source code:
+The same nine tools work identically on markdown docs, source code, and structured data:
 
 **Navigating documentation:**
 
@@ -50,6 +50,26 @@ get_tree("code:src:auth:service_h")
 
 get_node_content("code:src:auth:service_h", ["n3"])
   → just the authenticate method signature — not the whole 800-line file
+```
+
+**One-call retrieval (compile_context):**
+
+```
+compile_context({ intent: "auth token refresh", sources: ["all"] })
+  ## Hits — docs (2 of 8)
+  1. [docs:auth:middleware → n4] Auth Middleware › Refresh Flow  (score 0.0421)
+     auth/middleware.md
+     Snippet: Rotate the JWT signing key, then redeploy the auth service.
+
+  ## Hits — code (1 of 3)
+  1. [code:src:auth:service_ts → c1] AuthService › refreshToken  (score 0.0387)
+     src/auth/service.ts
+     Signature: refreshToken() { return this.signer.rotate(); }
+
+  ## Outlines (top 1)
+  ▸ docs:auth:middleware — Auth Middleware
+    [n0] # Auth Middleware (412 words)
+      [n1]   ## Token Lifecycle (180 words)
 ```
 
 Context budget: **2K–8K tokens** of precise content, vs 4K–20K tokens of noisy chunks from vector RAG.
@@ -107,11 +127,7 @@ DOCS_ROOT=./docs bun run serve:http                  # HTTP (port 3100)
 | `get_node_content` | Retrieve full text of specific sections by node ID |
 | `navigate_tree` | Get a section and all its descendants in one call |
 | `find_symbol` | Search code symbols by name, kind, and language (requires `CODE_ROOT`) |
-| `find_similar` | BM25 dedupe check for prospective content (requires `WIKI_WRITE=1`) |
-| `draft_wiki_entry` | Scaffold frontmatter + backlinks for a new entry (requires `WIKI_WRITE=1`) |
-| `write_wiki_entry` | Validated write + incremental re-index (requires `WIKI_WRITE=1`) |
-
-The last three are the **opt-in wiki curation toolset**. When `WIKI_WRITE=1` is set, an agent can safely author new entries — treenav enforces path containment, frontmatter schema, and duplicate thresholds. All LLM work stays in the calling agent; treenav itself performs zero LLM calls. See [docs/adr/0001-llm-curated-wiki.md](docs/adr/0001-llm-curated-wiki.md) for the design rationale and [docs/wiki-curation-spec.md](docs/wiki-curation-spec.md) for the tool contracts.
+| `compile_context` | Single-call composed retrieval: ranked hits per source + outline trees for top hits. Replaces the typical `search → tree → content` loop |
 
 ## Supported Languages
 
@@ -156,6 +172,7 @@ Memory: ~25–50MB for 900 docs; ~10–20MB for 1,500 code files with full posit
 - [Architecture & Design](docs/DESIGN.md) — BM25 engine, tree model, code indexer, Pagefind/PageIndex attribution
 - [Configuration Reference](docs/CONFIGURATION.md) — env vars, frontmatter, ranking tuning, glossary
 - [Competitive Analysis](docs/COMPETITIVE-ANALYSIS.md) — comparison with PageIndex, QMD, GitMCP, Code-Index-MCP, and others
+- [Retrieval Variants](docs/RETRIEVAL-VARIANTS.md) — comparison of BM25 baseline vs. semantic vs. compile_context, with decision framework
 
 ## Standing on Shoulders
 
