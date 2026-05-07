@@ -32,7 +32,11 @@ Index for Information Retrieval"_ by Gao et al.
 - The insight that **the LLM itself is the retrieval engine** — the agent
   reads a structural outline and reasons about which branches to explore,
   rather than relying on vector similarity scores to decide relevance
-- The 5-tool MCP interface pattern: catalog → search → tree → node → subtree
+- The MCP interface pattern: catalog → search → tree → node → subtree.
+  PageIndex shipped this as a 5-tool surface; treenav has since grown to a
+  9-tool surface (adding `grep_documents`, `find_symbol`, `lookup_row`, and
+  the composed `compile_context`) but the catalog → search → tree → content
+  shape is still the core agent loop.
 - The agent reasoning workflow: search to find candidates, read tree structure
   to reason about relevance, retrieve specific sections
 - The compact `TreeOutline` representation (no content, just structure + word
@@ -197,7 +201,8 @@ from different sites are ranked relative to each other. Filter values
 can be automatically injected per-index via `mergeFilter`.
 
 **Our adaptation:** We support multiple `DOCS_ROOT` directories, each
-indexed as a separate "collection" with its own weight. The
+indexed as a separate "collection" with its own weight. (Multiple roots
+are configured via `DOCS_ROOTS` — see `docs/CONFIGURATION.md`.) The
 `search_documents` tool can search across all collections or be scoped
 to one. Each collection gets an automatic `collection` filter facet.
 
@@ -435,8 +440,47 @@ At load time, for each node in each document:
 3. Compute BM25 score per posting: IDF × saturated TF × weight
 4. Apply facet filters (reduce candidate set before scoring)
 5. Apply co-occurrence bonuses (multi-term, full coverage)
-6. Sort by score, generate density-based snippets
+6. Fuse independent ranking signals via RRF (see below)
+7. Sort by score, generate density-based snippets
 ```
+
+### Ranking Signals Beyond BM25
+
+BM25 alone leaves quality on the table for code+docs corpora. The store
+layers several additional signals on top, calibrated against a QRel
+benchmark corpus. Full design and tuning notes are in
+[`docs/RETRIEVAL-VARIANTS.md`](./RETRIEVAL-VARIANTS.md) and
+[`docs/search-quality-spec.md`](./search-quality-spec.md); the brief
+inventory:
+
+- **Definition boost** — symbol nodes whose name matches the query are
+  multiplied (`definition_boost`), so searching `RateLimitPolicy` floats
+  the class definition above mentions.
+- **Subtoken matching** — identifiers like `RateLimitPolicy` get split
+  into `rate`, `limit`, `policy` and indexed as subtokens, scored at
+  `subtoken_weight` of an exact match. Bridges the camelCase/snake_case
+  vocabulary gap without embeddings.
+- **File coherence + lead bonus** — when multiple high-scoring nodes
+  share a file, the file's lead node gets a small bonus, giving the
+  agent an obvious entry point.
+- **Window-density signal** — for nodes longer than ~2× the average,
+  the densest term-window inside the node contributes a marginal
+  bonus (`window_density_bonus`, default 0.005). Helps long sections
+  surface when the relevant content is concentrated rather than scattered.
+- **Noise penalty** — per-collection `noise_patterns` let a corpus
+  declare patterns that should be down-ranked (e.g. boilerplate
+  copyright headers, generated code).
+- **RRF fusion** — signals each produce a ranked list, fused via
+  Reciprocal Rank Fusion: `score(d) = Σ weight_s · 1/(k + rank_s(d))`
+  with `rrf_k` and per-signal `signal_weights` exposed as ranking
+  parameters. RRF is robust to scale differences between signals.
+- **Adaptive signal weighting** — query shape changes which signals
+  matter (a single-term symbol query weights definition-boost higher;
+  a multi-term natural-language query weights co-occurrence higher).
+  The store re-balances `signal_weights` per query.
+
+All of this is deterministic and runs entirely in-memory. No models,
+no embeddings, no LLM calls.
 
 ---
 
@@ -536,8 +580,10 @@ Context budget: 2K-8K tokens vs vector RAG's 4K-20K tokens.
 ## Acknowledgments
 
 - **PageIndex** ([pageindex.ai](https://pageindex.ai)) — Tree navigation,
-  agent reasoning, the 5-tool interface pattern. The foundational insight
-  that LLM judgment outperforms vector similarity for structured retrieval.
+  agent reasoning, and the catalog → search → tree → content interface
+  pattern (a 5-tool surface in PageIndex, extended to 9 tools in treenav).
+  The foundational insight that LLM judgment outperforms vector similarity
+  for structured retrieval.
 
 - **Pagefind** ([pagefind.app](https://pagefind.app)) by **CloudCannon** —
   BM25 scoring, positional inverted index, weighted locations, density

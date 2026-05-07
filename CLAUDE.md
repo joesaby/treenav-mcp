@@ -13,10 +13,15 @@ src/
 ├── parsers/
 │   ├── typescript.ts # TS/JS regex-based AST extraction
 │   ├── python.ts     # Python indentation-based symbol extraction
-│   └── generic.ts    # Fallback for Go, Rust, Java, C, Ruby, etc.
+│   ├── go.ts         # Go symbol extraction
+│   ├── rust.ts       # Rust symbol extraction
+│   ├── java.ts       # Java symbol extraction
+│   └── generic.ts    # Fallback for C, C++, Ruby, and other languages
 ├── store.ts          # In-memory BM25 + grep engine, facets, glossary, row index
 ├── types.ts          # All TypeScript interfaces and ranking defaults
 ├── tools.ts          # Shared MCP tool registration
+├── compile-context.ts # Composed retrieval (search + grep + lookup + symbol → unified output)
+├── search-formatter.ts # Result formatting for search/grep/compile-context output
 ├── prompts.ts        # MCP prompts for doc-read / doc-grep workflows
 ├── server.ts         # MCP stdio server (9 read tools)
 ├── server-http.ts    # MCP HTTP/Streamable HTTP server variant
