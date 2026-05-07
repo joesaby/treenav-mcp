@@ -1,8 +1,8 @@
-# treenav-mcp — Competitive Landscape Analysis
+# treenav — Competitive Landscape Analysis
 
-_Last verified: February 2026_
+_Last verified: May 2026_
 
-This document positions treenav-mcp against the MCP document retrieval and
+This document positions treenav against the MCP document retrieval and
 code navigation ecosystem. For architecture and attribution details, see
 [DESIGN.md](./DESIGN.md).
 
@@ -14,7 +14,7 @@ code navigation ecosystem. For architecture and attribution details, see
 
 | Project | Approach | Stars | Local/Cloud | LLM at Index | LLM at Query |
 |---------|----------|-------|-------------|--------------|--------------|
-| **treenav-mcp** | BM25 + tree navigation | Early stage | Local | No | No |
+| **treenav** | BM25 + tree navigation | Early stage | Local | No | No |
 | **PageIndex** (VectifyAI) | LLM tree search | 15K (lib) / 209 (MCP) | Both | Yes | Yes |
 | **QMD** (Tobi Lütke) | BM25 + vectors + LLM reranker | — | Local | Yes (embeddings) | Yes (reranker) |
 | **GitMCP** (idosal) | GitHub proxy | 7.6K | Cloud | No | No |
@@ -26,13 +26,13 @@ code navigation ecosystem. For architecture and attribution details, see
 
 | Project | Approach | Parser | BM25? | Tree nav? |
 |---------|----------|--------|-------|-----------|
-| **treenav-mcp** | Symbol index + BM25 + tree nav | Regex/indent AST | Yes | Yes |
+| **treenav** | Symbol index + BM25 + tree nav | Regex/indent AST | Yes | Yes |
 | **Code-Index-MCP** (ViperJuice) | Symbol index + BM25 | tree-sitter (48 langs) | Yes (SQLite FTS5) | No |
 | **mcp-server-tree-sitter** (wrale) | Live AST queries | tree-sitter (100+ langs) | No | No |
 | **Serena** (oraios) | Symbol search + LSP integration | tree-sitter + LSP | No | No |
 | **ast-grep-mcp** | Structural pattern matching | tree-sitter | No | No |
 
-treenav-mcp is the only tool in either table that covers both markdown documentation
+treenav is the only tool in either table that covers both markdown documentation
 and source code in a single BM25-indexed, tree-navigable corpus.
 
 ---
@@ -44,7 +44,7 @@ and source code in a single BM25-indexed, tree-navigable corpus.
 **Repo:** [VectifyAI/PageIndex](https://github.com/VectifyAI/PageIndex) (15,094 stars),
 [VectifyAI/pageindex-mcp](https://github.com/VectifyAI/pageindex-mcp) (209 stars)
 
-PageIndex pioneered the tree navigation concept that treenav-mcp adopts.
+PageIndex pioneered the tree navigation concept that treenav adopts.
 Its Mafin 2.5 system achieved 98.7% accuracy on FinanceBench
 ([VentureBeat](https://venturebeat.com/infrastructure/this-tree-search-framework-hits-98-7-on-documents-where-vector-search-fails/)),
 a benchmark involving multi-hop queries over financial documents with
@@ -54,7 +54,7 @@ internal cross-references.
 
 PageIndex uses LLM calls at both index time (GPT-4o builds tree structures
 from PDFs, generates node summaries) and retrieval time (the LLM navigates
-the tree to find relevant sections). treenav-mcp uses zero LLM calls at
+the tree to find relevant sections). treenav uses zero LLM calls at
 either stage — markdown headings provide the tree for free, and BM25
 handles ranking.
 
@@ -69,7 +69,7 @@ and hosted infrastructure.
   *within* the retrieval pipeline, following breadcrumbs across sections.
 - PDF documents where structure must be inferred rather than parsed.
 
-**Where treenav-mcp wins:**
+**Where treenav wins:**
 
 - Speed: 5-30ms queries with zero LLM tokens vs hundreds of milliseconds
   minimum (LLM inference floor). For an agent making 10-15 retrieval calls,
@@ -100,26 +100,26 @@ Supports both stdio and HTTP MCP transports.
 
 - Semantic matching. A search for "how to handle expired credentials" will
   find docs about "token refresh flow" because vector similarity bridges
-  the vocabulary gap. treenav-mcp's BM25 with stemming and prefix matching
+  the vocabulary gap. treenav's BM25 with stemming and prefix matching
   will partially bridge this, but cannot make the semantic leap.
 - Single-query precision. The BM25 + vector + reranker pipeline gives QMD
   the best accuracy on any individual question.
 
-**Where treenav-mcp wins:**
+**Where treenav wins:**
 
 - No model downloads. QMD requires ~2GB of GGUF models on first run.
-  treenav-mcp has two npm dependencies.
+  treenav has two npm dependencies.
 - No GPU/CPU inference overhead. QMD loads models into memory (hundreds of
-  MB to GB). treenav-mcp uses ~25-50MB for 900 docs.
+  MB to GB). treenav uses ~25-50MB for 900 docs.
 - Structure awareness. QMD returns ranked chunks — the agent gets answers
   but cannot browse document structure, reason about section hierarchy, or
   selectively retrieve branches. For multi-step reasoning over a document's
   architecture, tree navigation outperforms flat chunk retrieval.
 - Speed. QMD's hybrid pipeline involves model inference at query time.
-  treenav-mcp returns in 5-30ms.
+  treenav returns in 5-30ms.
 
 **Honest assessment:** QMD has better search recall for fuzzy/semantic
-queries. treenav-mcp has better agent workflow support via tree navigation.
+queries. treenav has better agent workflow support via tree navigation.
 They optimize for different things — if your docs use consistent
 terminology, BM25 is sufficient and the tree navigation advantage matters
 more. If your queries frequently use different vocabulary than your docs,
@@ -146,31 +146,31 @@ code search API.
   (`gitmcp.io/docs`) lets the agent pick the repo dynamically.
 - No local clone needed. GitMCP works directly against the GitHub API.
 
-**Where treenav-mcp wins:**
+**Where treenav wins:**
 
 - Retrieval quality. GitMCP has no inverted index, no relevance scoring,
   no ranking. If a project lacks `llms.txt` (most don't), the agent gets
-  a README blob. treenav-mcp builds a proper BM25-scored index with
+  a README blob. treenav builds a proper BM25-scored index with
   positional data and density-based snippets.
 - Structure. GitMCP has no concept of heading hierarchy or section-level
-  retrieval. It delivers flat content — "here's the doc." treenav-mcp lets
+  retrieval. It delivers flat content — "here's the doc." treenav lets
   the agent see `[n4] ## Token Refresh Flow (180 words)` and decide
   whether to pull it.
 - Token efficiency. GitMCP often dumps full pages into context (10-20K+
-  tokens of unfiltered content). treenav-mcp lets the agent budget tokens
+  tokens of unfiltered content). treenav lets the agent budget tokens
   by picking exact sections (2-8K tokens of precise content).
 - **Private and enterprise docs.** GitMCP explicitly states it "only
   accesses content that is already publicly available." No authentication,
-  no support for GitHub Enterprise Server behind VPN/firewall. treenav-mcp
+  no support for GitHub Enterprise Server behind VPN/firewall. treenav
   works entirely offline on any markdown on disk.
 - Latency. 5-30ms local vs network round-trips to GitHub's API, subject
   to rate limits.
 
 **Honest assessment:** These aren't really competing for the same user.
 GitMCP solves discovery (quickly get context on any OSS project).
-treenav-mcp solves precision retrieval (navigate and extract exactly what
+treenav solves precision retrieval (navigate and extract exactly what
 you need from a known corpus). An engineer might use GitMCP to explore a
-new library, then switch to treenav-mcp once that library's docs become
+new library, then switch to treenav once that library's docs become
 part of their daily workflow.
 
 ---
@@ -187,18 +187,22 @@ PDF, Word, Excel, PowerPoint, and source code. Optionally uses embeddings
 **Where docs-mcp-server wins:**
 
 - Format breadth. Handles PDF, Word, Excel, PowerPoint, remote URLs, and
-  GitHub repos — treenav-mcp covers markdown and source code files.
+  GitHub repos — treenav covers markdown and source code files.
 - Optional semantic search via configurable embedding providers.
 
-**Where treenav-mcp wins:**
+**Where treenav wins:**
 
 - Tree navigation. docs-mcp-server is traditional RAG via MCP — chunks
   and retrieval, no heading hierarchy or structural reasoning.
 - Zero external dependencies. docs-mcp-server's semantic search requires
   an embedding provider (API keys, model configuration). Without
   embeddings, its search quality drops significantly.
-- Purpose-built vs general-purpose. treenav-mcp's five-tool workflow is
-  designed specifically for how agents reason over documentation structure.
+- Purpose-built vs general-purpose. treenav's nine-tool MCP surface
+  (`list_documents`, `search_documents`, `grep_documents`, `get_tree`,
+  `get_node_content`, `navigate_tree`, `lookup_row`, `find_symbol`,
+  `compile_context`) is designed specifically for how agents reason over
+  documentation structure — including a single composed-retrieval call
+  that collapses the search → tree → content loop.
 
 ---
 
@@ -211,11 +215,11 @@ file-based Milvus vector database. Chunks documents, computes embeddings
 (~50MB model downloaded on first run), stores in Milvus, retrieves by
 cosine similarity.
 
-This represents the "standard RAG" approach that treenav-mcp explicitly
+This represents the "standard RAG" approach that treenav explicitly
 contrasts against. The trade-off is straightforward: MCP-Markdown-RAG
 gets semantic matching (vocabulary-independent similarity) at the cost
 of chunking artifacts (losing document structure), embedding overhead,
-and a vector database dependency. treenav-mcp gets structural awareness
+and a vector database dependency. treenav gets structural awareness
 and zero-dependency speed at the cost of keyword-only matching.
 
 ---
@@ -227,7 +231,7 @@ and zero-dependency speed at the cost of keyword-only matching.
 Cloud-hosted, community-contributed registry of pre-indexed open-source
 library documentation (Next.js, MongoDB, Supabase, etc.). Completely
 different use case — Context7 solves "give me the latest framework docs"
-while treenav-mcp solves "let an agent navigate my documentation."
+while treenav solves "let an agent navigate my documentation."
 
 Context7 cannot index private or internal documentation. Its backend
 (API, parsing, crawling) is proprietary and not open source. It is
@@ -243,15 +247,15 @@ How each system performs across different query patterns:
 
 | Query Type | Best | Runner-up | Notes |
 |-----------|------|-----------|-------|
-| Well-structured markdown docs | treenav-mcp ≈ PageIndex | QMD | Tree navigation compensates for BM25-only search |
-| Complex PDFs with cross-references | PageIndex | treenav-mcp | LLM reasoning follows breadcrumbs across sections |
+| Well-structured markdown docs | treenav ≈ PageIndex | QMD | Tree navigation compensates for BM25-only search |
+| Complex PDFs with cross-references | PageIndex | treenav | LLM reasoning follows breadcrumbs across sections |
 | Fuzzy/semantic queries | QMD | PageIndex | Vector search bridges vocabulary gaps |
-| Agent autonomy (browsing + deciding) | treenav-mcp ≈ PageIndex | — | QMD/GitMCP lack tree navigation entirely |
-| Multi-step workflow (10+ tool calls) | treenav-mcp | PageIndex | 5-30ms vs LLM inference latency per call |
+| Agent autonomy (browsing + deciding) | treenav ≈ PageIndex | — | QMD/GitMCP lack tree navigation entirely |
+| Multi-step workflow (10+ tool calls) | treenav | PageIndex | 5-30ms vs LLM inference latency per call |
 
 ### The BM25 Limitation — An Honest Acknowledgment
 
-BM25-only search is treenav-mcp's main vulnerability. If someone searches
+BM25-only search is treenav's main vulnerability. If someone searches
 "how to handle expired credentials" but the docs say "token refresh flow,"
 BM25 with stemming and prefix matching will partially bridge the gap but
 cannot make the semantic connection that QMD's vector search would.
@@ -262,7 +266,8 @@ markdown docs that the user controls), because:
 1. Documentation authors tend to use consistent terminology
 2. The agent can browse the tree to discover sections by title
 3. Prefix matching catches many partial-term overlaps
-4. The five-tool workflow lets the agent iterate (search → browse → refine)
+4. The multi-tool workflow lets the agent iterate (search → browse →
+   refine), and `compile_context` does this in a single call
 
 But for corpora with inconsistent terminology or natural-language queries
 from users unfamiliar with the docs' vocabulary, this is a real gap.
@@ -271,12 +276,12 @@ from users unfamiliar with the docs' vocabulary, this is a real gap.
 
 | System | 900 docs | 5,000 docs (est.) | 10,000+ docs (est.) |
 |--------|----------|-------------------|----------------------|
-| **treenav-mcp** | 2-5s, 0 LLM tokens | ~15-25s (linear) | ~30-50s |
+| **treenav** | 2-5s, 0 LLM tokens | ~15-25s (linear) | ~30-50s |
 | **PageIndex** | Minutes (LLM calls per doc) | Expensive | Impractical without caching |
 | **QMD** | Minutes (model loading + embedding) | 10-30 min | Scales with model inference |
 | **docs-mcp-server** | Varies (depends on embedding provider) | Varies | Varies |
 
-treenav-mcp's zero-LLM, zero-embedding indexing is the most scalable of
+treenav's zero-LLM, zero-embedding indexing is the most scalable of
 the group. The known boundary: the positional inverted index lives entirely
 in memory. At 10,000+ documents with hundreds of thousands of sections,
 this could grow to several hundred MB. The scaling path
@@ -289,14 +294,14 @@ For the same retrieval task, total tokens consumed (index + retrieval):
 
 | System | Index tokens | Per-query tokens | Agent workflow (10 calls) |
 |--------|-------------|------------------|--------------------------|
-| **treenav-mcp** | 0 | ~300-1K | ~3K-10K |
+| **treenav** | 0 | ~300-1K | ~3K-10K |
 | **PageIndex** | Thousands per doc | Hundreds-thousands (LLM reasoning) | ~10K-50K+ |
 | **QMD** | 0 (local models) | 0 (local models) | 0 (local models) |
 | **GitMCP** | 0 | ~10K-20K (full pages dumped) | ~100K-200K |
 
 QMD technically wins here since it uses local models with zero API tokens,
 but at the cost of ~2GB of local model files and GPU/CPU inference.
-treenav-mcp is the most token-efficient system that doesn't require
+treenav is the most token-efficient system that doesn't require
 downloading ML models.
 
 ### The Enterprise Blind Spot
@@ -305,7 +310,7 @@ Most popular MCP doc servers assume public access:
 
 | System | Private repos | Enterprise GitHub | Offline | No data leaves perimeter |
 |--------|--------------|-------------------|---------|------------------------|
-| **treenav-mcp** | Yes | Yes | Yes | Yes |
+| **treenav** | Yes | Yes | Yes | Yes |
 | **PageIndex** | Via local mode | Via local mode | Via local mode | Via local mode |
 | **QMD** | Yes | Yes | Yes | Yes |
 | **GitMCP** | No | No | No | No |
@@ -314,15 +319,15 @@ Most popular MCP doc servers assume public access:
 
 For regulated industries (telecom, finance, healthcare) where documentation
 cannot leave the network perimeter, the options narrow to systems that run
-entirely locally with no external calls. treenav-mcp and QMD both qualify.
-treenav-mcp additionally makes no network calls of any kind — not even to
+entirely locally with no external calls. treenav and QMD both qualify.
+treenav additionally makes no network calls of any kind — not even to
 download models.
 
 ---
 
 ### 7. Code Navigation Competitors
 
-treenav-mcp's code navigation competes with a set of MCP servers purpose-built
+treenav's code navigation competes with a set of MCP servers purpose-built
 for source code. Key comparisons:
 
 **vs Code-Index-MCP (ViperJuice):** The most architecturally similar code-only
@@ -334,7 +339,7 @@ tracking; no hierarchical tree navigation model, code-only (no markdown docs).
 tree-sitter CSTs, symbol extraction, cyclomatic complexity, and dependency
 analysis for 100+ languages. No BM25 ranking; agents can't search "rate limit
 implementation" and get scored results. Complementary for deep structural
-queries; treenav-mcp is better for relevance-ranked keyword search.
+queries; treenav is better for relevance-ranked keyword search.
 
 **vs Serena (oraios):** Best-in-class for language-server integration
 (tree-sitter + optional LSP semantic data). Purpose-built for interactive
@@ -342,13 +347,16 @@ code editing assistance. No persistent BM25 index; no markdown doc support.
 
 **vs ast-grep-mcp:** Structural *pattern* matching (find all `X.method()` calls
 matching a shape) rather than keyword relevance ranking. Complementary —
-use ast-grep-mcp for refactoring patterns, treenav-mcp for content search.
+use ast-grep-mcp for refactoring patterns, treenav for content search.
 
-**The key differentiator:** treenav-mcp is the only tool that provides
+**The key differentiator:** treenav is the only tool that provides
 BM25-ranked search *and* hierarchical tree navigation *across both markdown
 docs and source code* in a single unified index. An agent searching "rate
 limit" gets hits from your runbook docs, your API reference, and your
-`RateLimitPolicyImpl` class implementation, all scored together.
+`RateLimitPolicyImpl` class implementation, all scored together — and via
+`compile_context` it gets ranked hits partitioned by source (docs / code /
+rows) plus outline trees for the top hits in a *single* tool call,
+collapsing the typical search → tree → content loop.
 
 ---
 
@@ -598,8 +606,11 @@ the tree-navigation insight and remove the LLM from indexing and routing.
 
 ## Positioning
 
-treenav-mcp occupies a specific niche: **structured local-first navigation
-over both documentation and source code, with zero external dependencies.**
+treenav occupies a specific niche: **structured local-first navigation
+over documentation, source code, and structured row data (CSV/JSONL) in
+a single index, with zero external dependencies.** It exposes a 9-tool
+MCP surface — including a composed `compile_context` tool that returns
+ranked hits partitioned by source plus outline trees in one call.
 
 It trades:
 - GitMCP's convenience for retrieval precision and offline capability
@@ -619,7 +630,7 @@ semantics for code editing (Serena).
 
 ---
 
-## Where to List treenav-mcp
+## Where to List treenav
 
 Registries for MCP server visibility:
 
