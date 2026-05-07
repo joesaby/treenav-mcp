@@ -11,6 +11,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { DocumentStore } from "./store";
 import type { GrepOutcome } from "./types";
 import { formatSearchResults } from "./search-formatter.js";
+import { compileContext } from "./compile-context.js";
 
 /**
  * Render a grep_documents outcome as agent-friendly text:
@@ -60,6 +61,7 @@ export function formatGrepResult(outcome: GrepOutcome, pattern: string): string 
  *   6. navigate_tree    — Get a subtree (node + all descendants)
  *   7. lookup_row       — O(1) key→row lookup for structured (CSV/JSONL) data
  *   8. find_symbol      — Code-aware symbol search
+ *   9. compile_context  — Composed retrieval (search + outlines in one call)
  *
  * Resources:
  *   - index-stats (md-tree://stats) — JSON index statistics
@@ -448,6 +450,47 @@ export function registerTools(
           },
         ],
       };
+    }
+  );
+
+  // ── Tool 9: compile_context ────────────────────────────────────────
+
+  server.tool(
+    "compile_context",
+    "Composed retrieval. Runs one search/grep/lookup/symbol pass against the requested sources (docs, code, rows), returns ranked hits partitioned by source, plus outline trees for the top hits — all in one call. Use this to collapse the typical search → get_tree → get_node_content loop. For unknown query shape, set mode='auto' and treenav routes the call. Provenance brackets [doc_id → node_id] on every hit; budget is enforced and reported.",
+    {
+      intent: z.string().min(1).describe("The query — natural language, literal, regex, structured key, or symbol name."),
+      mode: z
+        .enum(["auto", "search", "grep", "lookup", "symbol"])
+        .default("auto")
+        .describe("Routing mode. 'auto' picks search/grep/lookup/symbol from the intent shape. Use an explicit mode to override."),
+      sources: z
+        .array(z.enum(["docs", "code", "rows", "all"]))
+        .default(["all"])
+        .describe("Which corpora to search. ['all'] expands to docs+code+rows."),
+      filters: z
+        .record(z.union([z.string(), z.array(z.string())]))
+        .optional()
+        .describe('Facet filters, same shape as search_documents. Example: { "type": "runbook" }'),
+      output: z
+        .object({
+          top_k_per_source: z.number().min(1).max(10).default(3),
+          include_snippets: z.boolean().default(true),
+          include_outlines_for_top: z.number().min(0).max(5).default(2),
+          include_full_content_for_top: z.number().min(0).max(5).default(0),
+          max_tokens: z.number().min(100).max(8000).default(2000),
+        })
+        .default({}),
+    },
+    async ({ intent, mode, sources, filters, output }) => {
+      const { text } = compileContext(store, {
+        intent,
+        mode,
+        sources,
+        filters,
+        output,
+      });
+      return { content: [{ type: "text" as const, text }] };
     }
   );
 

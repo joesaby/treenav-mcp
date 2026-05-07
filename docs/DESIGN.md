@@ -334,7 +334,12 @@ search layer of this project.
 │  │              │  │  prefix match│  │              │  │  filter  │  │
 │  │              │  │  facet filter│  │  (PageIndex) │  │          │  │
 │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  └────┬─────┘  │
-│         └─────────────────┴─────────────────┴───────────────┘        │
+│         └──────────────────┴──────────────────┴──────────────┘        │
+│                                                                       │
+│  ┌──────────────────────────────────────────────────────────────┐    │
+│  │            compile_context (composed retrieval)              │    │
+│  │  Orchestrates search/grep/lookup/symbol + outlines → JSON   │    │
+│  └──────────────────────────┬─────────────────────────────────┘    │
 │                                     │                                 │
 │                        ┌────────────▼──────────────┐                  │
 │                        │      DocumentStore         │                  │
@@ -384,12 +389,23 @@ search layer of this project.
    Handles both markdown nodes and code symbol nodes identically.
    Supports incremental re-indexing via content hashing.
 
-4. **MCP Server** — Exposes 8 read tools via `@modelcontextprotocol/sdk`:
+4. **MCP Server** — Exposes 9 read tools via `@modelcontextprotocol/sdk`:
    `list_documents`, `search_documents`, `grep_documents` (literal/regex
    match without stemming), `get_tree`, `get_node_content`, `navigate_tree`
    (all work on docs, code, and structured rows), plus `find_symbol` for
-   code-specific filtering by symbol kind and language, and `lookup_row`
-   for O(1) key→row retrieval against indexed CSV/JSONL data.
+   code-specific filtering by symbol kind and language, `lookup_row`
+   for O(1) key→row retrieval against indexed CSV/JSONL data, and
+   `compile_context` for composed retrieval (single call collapsing the
+   typical search → tree → content loop).
+
+**Composed Retrieval (`compile_context`)** — Pure orchestration over
+`DocumentStore`'s public methods: no new ranking, no new index, no LLM
+calls. Dispatches to search/grep/lookup/symbol based on query intent,
+returns ranked hits partitioned by source (docs/code/rows) with bundled
+outline trees for top results. Replaces the `search → get_tree →
+get_node_content` loop with a single call. See
+`docs/superpowers/specs/2026-05-06-compile-context-design.md` for the full
+design.
 
 ---
 

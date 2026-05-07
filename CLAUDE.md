@@ -18,7 +18,7 @@ src/
 ├── types.ts          # All TypeScript interfaces and ranking defaults
 ├── tools.ts          # Shared MCP tool registration
 ├── prompts.ts        # MCP prompts for doc-read / doc-grep workflows
-├── server.ts         # MCP stdio server (8 read tools)
+├── server.ts         # MCP stdio server (9 read tools)
 ├── server-http.ts    # MCP HTTP/Streamable HTTP server variant
 ├── cli-index.ts      # CLI debugging tool for inspecting indexed output
 └── cli-init.ts       # `bunx treenav init` — wires up host MCP config
@@ -103,6 +103,7 @@ This enables bidirectional query expansion: searching "CLI" also matches "comman
 6. **`navigate_tree`** — Get a section and all descendants in one call
 7. **`lookup_row`** — O(1) key→row lookup for indexed CSV/JSONL data (e.g. `PROJ-44`, `ITEM-1234`)
 8. **`find_symbol`** — Search code symbols by name, kind (`class`/`function`/`interface`/etc.), and language (requires `CODE_ROOT`)
+9. **`compile_context`** — Composed retrieval. Single call returns ranked hits partitioned by source (docs/code/rows) plus outline trees for the top hits. Replaces the typical `search → get_tree → get_node_content` loop with one call. `mode='auto'` picks the right primitive (search / grep / lookup / symbol) from the intent shape.
 
 ### CLI Wrapper
 
