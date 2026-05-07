@@ -12,13 +12,6 @@ import type { DocumentStore } from "./store";
 import type { GrepOutcome } from "./types";
 import { formatSearchResults } from "./search-formatter.js";
 import { compileContext } from "./compile-context.js";
-import {
-  CuratorError,
-  draftWikiEntry,
-  findSimilar,
-  writeWikiEntry,
-  type WikiOptions,
-} from "./curator.js";
 
 /**
  * Render a grep_documents outcome as agent-friendly text:
@@ -59,7 +52,7 @@ export function formatGrepResult(outcome: GrepOutcome, pattern: string): string 
 /**
  * Register all treenav tools and resources on the given MCP server.
  *
- * Read tools (always registered):
+ * Read tools:
  *   1. list_documents   — Browse the document catalog
  *   2. search_documents — Keyword search across all docs
  *   3. grep_documents   — Literal/regex match (the `grep -n` of the index)
@@ -70,18 +63,12 @@ export function formatGrepResult(outcome: GrepOutcome, pattern: string): string 
  *   8. find_symbol      — Code-aware symbol search
  *   9. compile_context  — Composed retrieval (search + outlines in one call)
  *
- * Curation tools (only when options.wiki is provided, i.e. WIKI_WRITE=1):
- *   10. find_similar    — BM25 dedupe check for prospective content
- *   11. draft_wiki_entry — Structural scaffold for a new entry (no write)
- *   12. write_wiki_entry — Validated write + incremental re-index
- *
  * Resources:
  *   - index-stats (md-tree://stats) — JSON index statistics
  */
 export function registerTools(
   server: McpServer,
-  store: DocumentStore,
-  options?: { wiki?: WikiOptions }
+  store: DocumentStore
 ): void {
   // ── Tool 1: list_documents ─────────────────────────────────────────
 
@@ -507,12 +494,6 @@ export function registerTools(
     }
   );
 
-  // ── Curation tools (opt-in via WIKI_WRITE=1) ───────────────────────
-
-  if (options?.wiki) {
-    registerCurationTools(server, store, options.wiki);
-  }
-
   // ── Resources: expose index stats ──────────────────────────────────
 
   server.resource("index-stats", "md-tree://stats", async (uri) => {
@@ -527,182 +508,4 @@ export function registerTools(
       ],
     };
   });
-}
-
-// ── Curation tool implementations ────────────────────────────────────
-//
-// These are only registered when WIKI_WRITE=1 is set. They preserve the
-// project's core principle — zero LLM calls inside treenav — by exposing
-// deterministic BM25 / validation primitives that let a calling agent
-// curate a Karpathy-style wiki using its own LLM.
-//
-// See docs/adr/0001-llm-curated-wiki.md and docs/wiki-curation-spec.md.
-
-function jsonBlock(value: unknown): string {
-  return "```json\n" + JSON.stringify(value, null, 2) + "\n```";
-}
-
-function errorResult(err: unknown): {
-  content: Array<{ type: "text"; text: string }>;
-  isError: true;
-} {
-  const message =
-    err instanceof CuratorError
-      ? `${err.code}: ${err.message}`
-      : err instanceof Error
-        ? err.message
-        : String(err);
-  return {
-    content: [{ type: "text" as const, text: `Error: ${message}` }],
-    isError: true,
-  };
-}
-
-function registerCurationTools(
-  server: McpServer,
-  store: DocumentStore,
-  wiki: WikiOptions
-): void {
-  // ── Tool 7: find_similar ─────────────────────────────────────────
-
-  server.tool(
-    "find_similar",
-    "Dedupe check for prospective wiki content. Runs arbitrary text through the BM25 engine and returns the top-N overlapping entries. Use this BEFORE drafting or writing a new entry to avoid creating a duplicate. Requires WIKI_WRITE=1.",
-    {
-      content: z
-        .string()
-        .min(1)
-        .describe(
-          "Text to check for duplicates — the full raw source you're about to curate, or a draft body"
-        ),
-      limit: z
-        .number()
-        .min(1)
-        .max(20)
-        .default(5)
-        .describe("Max matches to return"),
-      threshold: z
-        .number()
-        .min(0)
-        .max(10)
-        .default(0.001)
-        .describe(
-          "Minimum search score for a match to be reported. Default 0.001 — calibrated for the RRF-fused score scale (~[0, 0.05]); set higher to be more selective."
-        ),
-      collection: z
-        .string()
-        .optional()
-        .describe("Restrict to a single collection"),
-    },
-    async ({ content, limit, threshold, collection }) => {
-      try {
-        const result = findSimilar(store, content, {
-          limit,
-          threshold,
-          collection,
-          duplicateThreshold: wiki.duplicateThreshold,
-        });
-        return { content: [{ type: "text" as const, text: jsonBlock(result) }] };
-      } catch (err) {
-        return errorResult(err);
-      }
-    }
-  );
-
-  // ── Tool 8: draft_wiki_entry ─────────────────────────────────────
-
-  server.tool(
-    "draft_wiki_entry",
-    "Produce a structural scaffold for a new wiki entry: suggested path, frontmatter (type/category/tags inferred from related entries), backlink candidates, and a duplicate warning if relevant. Does NOT write anything. Use the returned scaffold to author the body with your own LLM, then call write_wiki_entry. Requires WIKI_WRITE=1.",
-    {
-      topic: z
-        .string()
-        .min(1)
-        .describe("Short topic handle — used for the path slug and title"),
-      raw_content: z
-        .string()
-        .min(1)
-        .describe("Source material to be distilled into the new entry"),
-      suggested_path: z
-        .string()
-        .optional()
-        .describe(
-          "Optional relative path under the wiki root. Must end in .md and stay inside the root."
-        ),
-      source_url: z
-        .string()
-        .optional()
-        .describe("Canonical URL of the raw source, echoed into frontmatter"),
-    },
-    async ({ topic, raw_content, suggested_path, source_url }) => {
-      try {
-        const draft = draftWikiEntry(store, wiki, {
-          topic,
-          raw_content,
-          suggested_path,
-          source_url,
-        });
-        return { content: [{ type: "text" as const, text: jsonBlock(draft) }] };
-      } catch (err) {
-        return errorResult(err);
-      }
-    }
-  );
-
-  // ── Tool 9: write_wiki_entry ─────────────────────────────────────
-
-  server.tool(
-    "write_wiki_entry",
-    "Write a curated entry to disk and trigger incremental re-index. Validates path containment, frontmatter schema, and duplicate overlap before touching disk. Use dry_run=true first to preview. On success returns the new doc_id so you can immediately call get_tree / get_node_content. Requires WIKI_WRITE=1.",
-    {
-      path: z
-        .string()
-        .min(1)
-        .describe("Relative path under the wiki root. Must end in .md."),
-      frontmatter: z
-        .record(z.unknown())
-        .describe(
-          "Frontmatter object. Values must be strings, numbers, booleans, or arrays of strings/numbers."
-        ),
-      content: z
-        .string()
-        .describe("Markdown body (without frontmatter fence)"),
-      dry_run: z
-        .boolean()
-        .default(false)
-        .describe("Validate and preview without touching disk"),
-      allow_duplicate: z
-        .boolean()
-        .default(false)
-        .describe(
-          "Override duplicate warning. Required when overlap exceeds WIKI_DUPLICATE_THRESHOLD."
-        ),
-      overwrite: z
-        .boolean()
-        .default(false)
-        .describe("Allow replacing an existing file at the same path"),
-    },
-    async ({
-      path,
-      frontmatter,
-      content,
-      dry_run,
-      allow_duplicate,
-      overwrite,
-    }) => {
-      try {
-        const result = await writeWikiEntry(store, wiki, {
-          path,
-          frontmatter,
-          content,
-          dry_run,
-          allow_duplicate,
-          overwrite,
-        });
-        return { content: [{ type: "text" as const, text: jsonBlock(result) }] };
-      } catch (err) {
-        return errorResult(err);
-      }
-    }
-  );
 }

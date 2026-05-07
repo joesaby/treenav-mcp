@@ -123,9 +123,11 @@ DOCS_ROOT=./docs bun run serve:http                  # HTTP (port 3100)
 |------|-------------|
 | `list_documents` | Browse catalog with tag/keyword filtering and facet counts |
 | `search_documents` | BM25 keyword search with facet filters and glossary expansion |
+| `grep_documents` | Literal/regex match across indexed content — the `grep -n` of the index |
 | `get_tree` | Hierarchical outline — structure and word counts, no content |
 | `get_node_content` | Retrieve full text of specific sections by node ID |
 | `navigate_tree` | Get a section and all its descendants in one call |
+| `lookup_row` | O(1) key→row lookup for indexed CSV/JSONL data |
 | `find_symbol` | Search code symbols by name, kind, and language (requires `CODE_ROOT`) |
 | `compile_context` | Single-call composed retrieval: ranked hits per source + outline trees for top hits. Replaces the typical `search → tree → content` loop |
 

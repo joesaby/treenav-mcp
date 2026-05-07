@@ -396,9 +396,7 @@ search layer of this project.
    code-specific filtering by symbol kind and language, `lookup_row`
    for O(1) key→row retrieval against indexed CSV/JSONL data, and
    `compile_context` for composed retrieval (single call collapsing the
-   typical search → tree → content loop). An optional 3-tool curation
-   surface (`find_similar`, `draft_wiki_entry`, `write_wiki_entry`) is
-   registered when `WIKI_WRITE=1`.
+   typical search → tree → content loop).
 
 **Composed Retrieval (`compile_context`)** — Pure orchestration over
 `DocumentStore`'s public methods: no new ranking, no new index, no LLM

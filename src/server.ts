@@ -13,11 +13,6 @@
  *   7. lookup_row       - O(1) key→row lookup (CSV/JSONL data)
  *   8. find_symbol      - Search code symbols by name/kind/language
  *
- * Optional wiki curation tools (WIKI_WRITE=1):
- *   9.  find_similar     - Duplicate detection before writing
- *   10. draft_wiki_entry - Structural scaffold for new entries
- *   11. write_wiki_entry - Validated write with safety checks
- *
  * The agent workflow:
  *   search/list → pick doc → get_tree → reason about structure →
  *   get_node_content for the exact section needed
@@ -27,12 +22,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 import { existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { DocumentStore } from "./store";
 import { indexAllCollections } from "./indexer";
 import { singleRootConfig } from "./types";
 import type { IndexConfig } from "./types";
-import type { WikiOptions } from "./curator";
 import { registerTools } from "./tools";
 import { registerPrompts } from "./prompts";
 
@@ -78,28 +72,14 @@ const server = new McpServer({
   version: "1.0.0",
 });
 
-// ── Wiki configuration (opt-in via WIKI_WRITE=1) ────────────────────
-
-let wiki: WikiOptions | undefined;
-if (process.env.WIKI_WRITE === "1") {
-  const wikiRoot = resolve(process.env.WIKI_ROOT || docs_root);
-  wiki = {
-    root: wikiRoot,
-    collectionName: "docs",
-    duplicateThreshold: parseFloat(
-      process.env.WIKI_DUPLICATE_THRESHOLD || "0.35"
-    ),
-  };
-}
-
 // ── Register tools, prompts, resources ──────────────────────────────
 //
 // `registerTools` also registers the `md-tree://stats` resource so the
 // stdio (this file) and HTTP (server-http.ts) entrypoints stay aligned —
 // don't re-register it here.
 
-registerTools(server, store, { wiki });
-registerPrompts(server, { wikiEnabled: !!wiki });
+registerTools(server, store);
+registerPrompts(server);
 
 // ── Startup ──────────────────────────────────────────────────────────
 
@@ -144,10 +124,6 @@ async function main() {
     console.error(
       `[treenav] Ready in ${elapsed}s — ${stats.document_count} docs, ${stats.total_nodes} sections, ${stats.indexed_terms} terms`
     );
-
-    if (wiki) {
-      console.error(`[treenav] Wiki write enabled — root: ${wiki.root}`);
-    }
   }, 0);
 }
 

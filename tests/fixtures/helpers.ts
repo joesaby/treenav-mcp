@@ -10,7 +10,6 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { DocumentStore } from "../../src/store";
 import { registerTools } from "../../src/tools";
-import type { WikiOptions } from "../../src/curator";
 import type { IndexedDocument, TreeNode, DocumentMeta } from "../../src/types";
 
 // ── Node / Meta / Doc factories ──────────────────────────────────────
@@ -102,7 +101,6 @@ export async function createMcpTestClient(
   options?: {
     glossary?: Record<string, string[]>;
     collectionWeights?: Record<string, number>;
-    wiki?: WikiOptions;
   },
 ): Promise<McpTestHarness> {
   // Build and populate the store
@@ -121,7 +119,7 @@ export async function createMcpTestClient(
     name: "treenav-test",
     version: "0.0.1",
   });
-  registerTools(mcpServer, store, { wiki: options?.wiki });
+  registerTools(mcpServer, store);
 
   // Wire up InMemoryTransport
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
