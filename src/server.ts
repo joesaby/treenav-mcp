@@ -4,14 +4,15 @@
  * Exposes tools that let an agent perform PageIndex-style reasoning
  * over your markdown repository and source code:
  *
- *   1. list_documents   - Browse the document catalog
+ *   1. compile_context  - Composed one-call retrieval (start here)
  *   2. search_documents - BM25 keyword search across all docs
  *   3. grep_documents   - Literal/regex match across indexed content
  *   4. get_tree         - Hierarchical outline of a document
- *   5. get_node_content - Retrieve text from specific tree nodes
- *   6. navigate_tree    - Get a subtree (node + all descendants)
- *   7. lookup_row       - O(1) key→row lookup (CSV/JSONL data)
- *   8. find_symbol      - Search code symbols by name/kind/language
+ *   5. get_node_content - Retrieve text from tree nodes (± descendants)
+ *   6. lookup_row       - O(1) key→row lookup (CSV/JSONL data)
+ *   7. find_symbol      - Search code symbols by name/kind/language
+ *   8. list_documents   - Browse catalog + discover facets
+ *   9. refresh_index    - Re-scan roots, reload on change
  *
  * The agent workflow:
  *   search/list → pick doc → get_tree → reason about structure →
@@ -26,6 +27,7 @@ import { DocumentStore } from "./store";
 import { indexAllCollections } from "./indexer";
 import { buildConfigFromEnv, collectionWeights } from "./config";
 import { DEFAULT_CODE_NOISE_PATTERNS } from "./types";
+import { refreshStore } from "./refresh";
 import { registerTools } from "./tools";
 import { registerPrompts } from "./prompts";
 
@@ -51,7 +53,7 @@ const server = new McpServer({
 // stdio (this file) and HTTP (server-http.ts) entrypoints stay aligned —
 // don't re-register it here.
 
-registerTools(server, store);
+registerTools(server, store, { refresh: () => refreshStore(store, config) });
 registerPrompts(server);
 
 // ── Startup ──────────────────────────────────────────────────────────

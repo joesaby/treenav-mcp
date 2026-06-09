@@ -9,9 +9,36 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { DocumentStore } from "./store";
-import type { GrepOutcome } from "./types";
+import type { GrepOutcome, FacetCounts } from "./types";
+import type { RefreshSummary } from "./refresh";
 import { formatSearchResults } from "./search-formatter.js";
 import { compileContext } from "./compile-context.js";
+
+/** Optional capabilities injected by the hosting entrypoint. */
+export interface RegisterToolsOptions {
+  /**
+   * Re-scan the configured roots and reload the store. When provided, the
+   * `refresh_index` tool is registered. Library embedders that manage
+   * their own indexing can omit it.
+   */
+  refresh?: () => Promise<RefreshSummary>;
+}
+
+/** Compact facet-count rendering for list_documents output. */
+function formatFacetCounts(counts: FacetCounts, maxValuesPerKey = 8): string {
+  const keys = Object.keys(counts);
+  if (keys.length === 0) return "";
+  const lines = keys.sort().map((key) => {
+    const entries = Object.entries(counts[key]).sort((a, b) => b[1] - a[1]);
+    const shown = entries
+      .slice(0, maxValuesPerKey)
+      .map(([val, n]) => `${val} (${n})`)
+      .join(", ");
+    const more = entries.length > maxValuesPerKey ? `, +${entries.length - maxValuesPerKey} more` : "";
+    return `  ${key}: ${shown}${more}`;
+  });
+  return `\n\nFacets in this result set (use as \`filters\` in search_documents/list_documents):\n${lines.join("\n")}`;
+}
 
 /**
  * Render a grep_documents outcome as agent-friendly text:
@@ -46,35 +73,40 @@ export function formatGrepResult(outcome: GrepOutcome, pattern: string): string 
 
   const summary = `Found ${outcome.hits.length} match(es) for "${pattern}" across ${outcome.docs_scanned} doc(s) / ${outcome.nodes_scanned} section(s)${notes.length ? ` — ${notes.join("; ")}` : ""}.`;
 
-  return `${summary}\n\n${blocks.join("\n\n")}\n\nEach hit carries a node_id — call get_node_content(doc_id, [node_id]) or navigate_tree(doc_id, node_id) to read the full section.`;
+  return `${summary}\n\n${blocks.join("\n\n")}\n\nEach hit carries a node_id — call get_node_content(doc_id, [node_id]) to read the full section (include_descendants=true for its subsections too).`;
 }
 
 /**
  * Register all treenav tools and resources on the given MCP server.
  *
  * Read tools:
- *   1. list_documents   — Browse the document catalog
+ *   1. compile_context  — Composed retrieval (search + outlines in one call);
+ *                         the recommended starting point
  *   2. search_documents — Keyword search across all docs
  *   3. grep_documents   — Literal/regex match (the `grep -n` of the index)
  *   4. get_tree         — Hierarchical outline of a document
  *   5. get_node_content — Retrieve text from specific tree nodes
- *   6. navigate_tree    — Get a subtree (node + all descendants)
- *   7. lookup_row       — O(1) key→row lookup for structured (CSV/JSONL) data
- *   8. find_symbol      — Code-aware symbol search
- *   9. compile_context  — Composed retrieval (search + outlines in one call)
+ *                         (include_descendants=true for whole subtrees)
+ *   6. lookup_row       — O(1) key→row lookup for structured (CSV/JSONL) data
+ *   7. find_symbol      — Code-aware symbol search
+ *   8. list_documents   — Browse the catalog + discover available facets
+ *   9. refresh_index    — Re-scan roots, reload on change (when enabled)
+ *   —. navigate_tree    — DEPRECATED alias of
+ *                         get_node_content(include_descendants=true)
  *
  * Resources:
  *   - index-stats (md-tree://stats) — JSON index statistics
  */
 export function registerTools(
   server: McpServer,
-  store: DocumentStore
+  store: DocumentStore,
+  options: RegisterToolsOptions = {}
 ): void {
   // ── Tool 1: list_documents ─────────────────────────────────────────
 
   server.tool(
     "list_documents",
-    "List all indexed markdown documents. Filter by tag or keyword in title/path. Returns document metadata without content — use get_tree to explore a specific document's structure.",
+    "List indexed documents and discover the available filter facets. Filter by tag, keyword, collection, or facet values. Returns document metadata (no content) plus facet counts for the result set — call this first when you need to know which facets/values exist before filtering search_documents.",
     {
       query: z
         .string()
@@ -84,6 +116,14 @@ export function registerTools(
         .string()
         .optional()
         .describe("Filter documents by frontmatter tag"),
+      collection: z
+        .string()
+        .optional()
+        .describe("Limit to one collection (e.g. 'docs', 'code', or a DOCS_ROOTS collection name)"),
+      filters: z
+        .record(z.union([z.string(), z.array(z.string())]))
+        .optional()
+        .describe('Facet filters, same shape as search_documents. Example: { "type": "runbook" }'),
       limit: z
         .number()
         .min(1)
@@ -96,8 +136,8 @@ export function registerTools(
         .default(0)
         .describe("Pagination offset"),
     },
-    async ({ query, tag, limit, offset }) => {
-      const result = store.listDocuments({ query, tag, limit, offset });
+    async ({ query, tag, collection, filters, limit, offset }) => {
+      const result = store.listDocuments({ query, tag, collection, filters, limit, offset });
 
       const summary = result.documents
         .map(
@@ -106,11 +146,13 @@ export function registerTools(
         )
         .join("\n\n");
 
+      const facetBlock = formatFacetCounts(result.facet_counts);
+
       return {
         content: [
           {
             type: "text" as const,
-            text: `Found ${result.total} documents (showing ${offset + 1}-${Math.min(offset + limit, result.total)}):\n\n${summary}\n\nUse get_tree with a doc_id to explore a document's section hierarchy.`,
+            text: `Found ${result.total} documents (showing ${Math.min(offset + 1, result.total)}-${Math.min(offset + limit, result.total)}):\n\n${summary}${facetBlock}\n\nUse get_tree with a doc_id to explore a document's section hierarchy.`,
           },
         ],
       };
@@ -130,6 +172,10 @@ export function registerTools(
         .string()
         .optional()
         .describe("Limit search to a specific document"),
+      collection: z
+        .string()
+        .optional()
+        .describe("Limit search to one collection (e.g. 'docs', 'code', or a DOCS_ROOTS collection name — see list_documents facet counts)"),
       filters: z
         .record(z.union([z.string(), z.array(z.string())]))
         .optional()
@@ -143,8 +189,8 @@ export function registerTools(
         .default(15)
         .describe("Max results"),
     },
-    async ({ query, doc_id, filters, limit }) => {
-      const results = store.searchDocuments(query, { limit, doc_id, filters });
+    async ({ query, doc_id, collection, filters, limit }) => {
+      const results = store.searchDocuments(query, { limit, doc_id, collection, filters });
       const text = formatSearchResults(results, store, query);
       return { content: [{ type: "text" as const, text }] };
     }
@@ -241,7 +287,7 @@ export function registerTools(
         content: [
           {
             type: "text" as const,
-            text: `Document: ${tree.title}\nDoc ID: ${tree.doc_id}\nSections: ${tree.nodes.length}\n\n${outline}\n\nTo read a section's full content, call get_node_content("${doc_id}", ["node_id"]).\nTo get a section and all its subsections, call navigate_tree("${doc_id}", "node_id").`,
+            text: `Document: ${tree.title}\nDoc ID: ${tree.doc_id}\nSections: ${tree.nodes.length}\n\n${outline}\n\nTo read a section's full content, call get_node_content("${doc_id}", ["node_id"]).\nTo get a section and all its subsections, add include_descendants=true.`,
           },
         ],
       };
@@ -252,7 +298,7 @@ export function registerTools(
 
   server.tool(
     "get_node_content",
-    "Retrieve the full text content of one or more specific sections. Pass the node IDs obtained from get_tree or search_documents. This returns the actual content under those headings.",
+    "Retrieve the full text content of one or more specific sections. Pass the node IDs obtained from get_tree or search_documents. Set include_descendants=true to also get every subsection under each node (the whole subtree) in one call.",
     {
       doc_id: z.string().describe("Document ID"),
       node_ids: z
@@ -262,11 +308,15 @@ export function registerTools(
         .describe(
           "Array of node IDs to retrieve content for (from get_tree output)"
         ),
+      include_descendants: z
+        .boolean()
+        .default(false)
+        .describe(
+          "If true, each node is returned together with all of its descendant sections"
+        ),
     },
-    async ({ doc_id, node_ids }) => {
-      const result = store.getNodeContent(doc_id, node_ids);
-
-      if (!result) {
+    async ({ doc_id, node_ids, include_descendants }) => {
+      if (!store.hasDocument(doc_id)) {
         return {
           content: [
             {
@@ -277,7 +327,22 @@ export function registerTools(
         };
       }
 
-      if (result.nodes.length === 0) {
+      // Resolve requested nodes, expanding to subtrees when asked.
+      // Dedupe across overlapping subtrees while preserving order.
+      const seen = new Set<string>();
+      const nodes: NonNullable<ReturnType<typeof store.getNodeContent>>["nodes"] = [];
+      for (const node_id of node_ids) {
+        const batch = include_descendants
+          ? store.getSubtree(doc_id, node_id)?.nodes ?? []
+          : store.getNodeContent(doc_id, [node_id])?.nodes ?? [];
+        for (const n of batch) {
+          if (seen.has(n.node_id)) continue;
+          seen.add(n.node_id);
+          nodes.push(n);
+        }
+      }
+
+      if (nodes.length === 0) {
         return {
           content: [
             {
@@ -288,7 +353,7 @@ export function registerTools(
         };
       }
 
-      const formatted = result.nodes
+      const formatted = nodes
         .map(
           (n) =>
             `━━━ ${n.title} [${n.node_id}] (H${n.level}) ━━━\n\n${n.content || "(empty section)"}`
@@ -310,7 +375,7 @@ export function registerTools(
 
   server.tool(
     "navigate_tree",
-    "Get a tree node and ALL its descendant sections with full content. Use this when you need to read an entire section including all its subsections. More efficient than calling get_node_content repeatedly for each child.",
+    "DEPRECATED — use get_node_content with include_descendants=true instead; this alias will be removed in a future major release. Gets a tree node and ALL its descendant sections with full content.",
     {
       doc_id: z.string().describe("Document ID"),
       node_id: z
@@ -457,7 +522,7 @@ export function registerTools(
 
   server.tool(
     "compile_context",
-    "Composed retrieval. Runs one search/grep/lookup/symbol pass against the requested sources (docs, code, rows), returns ranked hits partitioned by source, plus outline trees for the top hits — all in one call. Use this to collapse the typical search → get_tree → get_node_content loop. For unknown query shape, set mode='auto' and treenav routes the call. Provenance brackets [doc_id → node_id] on every hit; budget is enforced and reported.",
+    "START HERE for retrieval. Composed one-call search: runs a search/grep/lookup/symbol pass against the requested sources (docs, code, rows), returns ranked hits partitioned by source, plus outline trees for the top hits. Collapses the typical search → get_tree → get_node_content loop; use the individual tools afterwards to drill into specific sections. For unknown query shape, keep mode='auto' and treenav routes the call. Provenance brackets [doc_id → node_id] on every hit; budget is enforced and reported.",
     {
       intent: z.string().min(1).describe("The query — natural language, literal, regex, structured key, or symbol name."),
       mode: z
@@ -493,6 +558,30 @@ export function registerTools(
       return { content: [{ type: "text" as const, text }] };
     }
   );
+
+  // ── Tool 10: refresh_index (only when the host provides a refresher) ─
+
+  if (options.refresh) {
+    const refresh = options.refresh;
+    server.tool(
+      "refresh_index",
+      "Re-scan the configured docs/code roots and reload the index if anything changed on disk. Use this after files have been created, edited, or deleted so search results reflect the current state. Cheap when nothing changed (content-hash comparison). Returns counts of added/changed/removed documents.",
+      {},
+      async () => {
+        try {
+          const s = await refresh();
+          const text = s.reloaded
+            ? `Index refreshed in ${s.duration_ms}ms: ${s.added} added, ${s.changed} changed, ${s.removed} removed, ${s.unchanged} unchanged (${s.total} documents total).`
+            : `Index already up to date (${s.total} documents, checked in ${s.duration_ms}ms).`;
+          return { content: [{ type: "text" as const, text }] };
+        } catch (err: any) {
+          return {
+            content: [{ type: "text" as const, text: `refresh_index error: ${err.message}` }],
+          };
+        }
+      }
+    );
+  }
 
   // ── Resources: expose index stats ──────────────────────────────────
 

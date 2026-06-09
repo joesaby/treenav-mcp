@@ -28,7 +28,7 @@ Set `CODE_ROOT` to enable AST-based code indexing alongside markdown docs.
 
 **Supported languages:** TypeScript, JavaScript, Python, Go, Rust, Java, Kotlin, Scala, C, C++, C#, Ruby, Swift, PHP, Lua, Shell
 
-**How it works:** Source files are parsed into the same tree structure used for markdown. Classes, functions, interfaces, and types become tree nodes with parent-child relationships (e.g., class → methods). All existing tools (`search_documents`, `get_tree`, `get_node_content`, `navigate_tree`) work on code files unchanged. The `find_symbol` tool provides code-specific filtering by symbol kind and language.
+**How it works:** Source files are parsed into the same tree structure used for markdown. Classes, functions, interfaces, and types become tree nodes with parent-child relationships (e.g., class → methods). All existing tools (`search_documents`, `get_tree`, `get_node_content`) work on code files unchanged. The `find_symbol` tool provides code-specific filtering by symbol kind and language.
 
 **Auto-generated facets for code:**
 

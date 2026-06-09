@@ -43,7 +43,7 @@ src/
 2. **Indexing (code)**: `code-indexer.ts` scans source files → language-specific parsers extract symbols (class, function, interface, etc.) → maps to TreeNode hierarchy → adds language/symbol_kind facets
 3. **Loading**: `store.ts` builds positional inverted index (term → postings with word positions and weights), filter facet index (key → value → doc_id set), and per-node stats for BM25 normalization
 4. **Searching**: Tokenize + stem query → expand via glossary → apply facet filters → compute BM25 scores → apply co-occurrence bonuses + collection weights → generate density-based snippets
-5. **Navigation**: Agent calls `get_tree` → compact outline → `get_node_content` or `navigate_tree` for precise retrieval
+5. **Navigation**: Agent calls `get_tree` → compact outline → `get_node_content` (optionally with `include_descendants`) for precise retrieval
 
 ## Development
 
@@ -101,15 +101,17 @@ This enables bidirectional query expansion: searching "CLI" also matches "comman
 
 ## MCP Tools
 
-1. **`list_documents`** — Browse catalog with tag/keyword filtering, returns facet counts
-2. **`search_documents`** — BM25 keyword search with facet filters and glossary expansion
+1. **`compile_context`** — The recommended starting point. Composed retrieval: single call returns ranked hits partitioned by source (docs/code/rows) plus outline trees for the top hits. Replaces the typical `search → get_tree → get_node_content` loop. `mode='auto'` picks the right primitive (search / grep / lookup / symbol) from the intent shape.
+2. **`search_documents`** — BM25 keyword search with facet filters, collection scoping, and glossary expansion
 3. **`grep_documents`** — Literal or regex match across indexed content (the `grep -n` of the index). Use when you know the exact symbol/error/CLI flag and don't want stemming or glossary expansion.
 4. **`get_tree`** — Hierarchical outline (no content) for agent reasoning
-5. **`get_node_content`** — Retrieve full text of specific sections by node ID
-6. **`navigate_tree`** — Get a section and all descendants in one call
-7. **`lookup_row`** — O(1) key→row lookup for indexed CSV/JSONL data (e.g. `PROJ-44`, `ITEM-1234`)
-8. **`find_symbol`** — Search code symbols by name, kind (`class`/`function`/`interface`/etc.), and language (requires `CODE_ROOT`)
-9. **`compile_context`** — Composed retrieval. Single call returns ranked hits partitioned by source (docs/code/rows) plus outline trees for the top hits. Replaces the typical `search → get_tree → get_node_content` loop with one call. `mode='auto'` picks the right primitive (search / grep / lookup / symbol) from the intent shape.
+5. **`get_node_content`** — Retrieve full text of specific sections by node ID; `include_descendants=true` returns each node with its whole subtree
+6. **`lookup_row`** — O(1) key→row lookup for indexed CSV/JSONL data (e.g. `PROJ-44`, `ITEM-1234`)
+7. **`find_symbol`** — Search code symbols by name, kind (`class`/`function`/`interface`/etc.), and language (requires `CODE_ROOT`)
+8. **`list_documents`** — Browse the catalog with tag/keyword/facet/collection filtering; returns facet counts so agents can discover available filters
+9. **`refresh_index`** — Re-scan the configured roots and reload the index when files changed on disk (content-hash diff; no-op when clean)
+
+Deprecated: **`navigate_tree`** — alias of `get_node_content` with `include_descendants=true`; kept registered for one major release.
 
 ### CLI Wrapper
 

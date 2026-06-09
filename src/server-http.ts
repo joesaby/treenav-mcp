@@ -14,6 +14,7 @@ import { DocumentStore } from "./store";
 import { indexAllCollections } from "./indexer";
 import { buildConfigFromEnv, collectionWeights } from "./config";
 import { DEFAULT_CODE_NOISE_PATTERNS } from "./types";
+import { refreshStore } from "./refresh";
 import { registerTools } from "./tools";
 import { registerPrompts } from "./prompts";
 
@@ -92,7 +93,7 @@ function createMcpServer(store: DocumentStore): McpServer {
     version: "1.0.0",
   });
 
-  registerTools(server, store);
+  registerTools(server, store, { refresh: () => refreshStore(store, config) });
   registerPrompts(server);
 
   return server;

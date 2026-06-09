@@ -561,6 +561,65 @@ describe("MCP get_node_content", () => {
   });
 });
 
+// ── list_documents facet discovery / search collection scoping ───────
+
+describe("MCP facet discovery and collection scoping", () => {
+  let harness: McpTestHarness;
+
+  afterEach(async () => {
+    if (harness) await harness.cleanup();
+  });
+
+  test("list_documents includes facet counts for the result set", async () => {
+    harness = await createMcpTestClient(allDocs());
+    const result = await harness.client.callTool({
+      name: "list_documents",
+      arguments: {},
+    });
+    const text = getToolText(result);
+    expect(text).toContain("Facets in this result set");
+    expect(text).toMatch(/category: guide \(\d+\)/);
+    expect(text).toMatch(/collection: /);
+  });
+
+  test("list_documents accepts facet filters", async () => {
+    harness = await createMcpTestClient(allDocs());
+    const result = await harness.client.callTool({
+      name: "list_documents",
+      arguments: { filters: { type: "deployment" } },
+    });
+    const text = getToolText(result);
+    expect(text).toContain("Deployment Guide");
+    expect(text).not.toContain("Authentication Guide");
+  });
+
+  test("list_documents accepts a collection filter", async () => {
+    harness = await createMcpTestClient(allDocs());
+    const result = await harness.client.callTool({
+      name: "list_documents",
+      arguments: { collection: "code" },
+    });
+    const text = getToolText(result);
+    expect(text).not.toContain("Authentication Guide");
+    expect(text).not.toContain("Deployment Guide");
+  });
+
+  test("search_documents accepts a collection scope", async () => {
+    harness = await createMcpTestClient(allDocs());
+    const scoped = await harness.client.callTool({
+      name: "search_documents",
+      arguments: { query: "token", collection: "nonexistent" },
+    });
+    expect(getToolText(scoped)).toContain("No results found");
+
+    const unscoped = await harness.client.callTool({
+      name: "search_documents",
+      arguments: { query: "token", collection: "docs" },
+    });
+    expect(getToolText(unscoped)).toContain("Authentication Guide");
+  });
+});
+
 // ── navigate_tree ────────────────────────────────────────────────────
 
 describe("MCP navigate_tree", () => {
@@ -630,6 +689,132 @@ describe("MCP navigate_tree", () => {
 
     const text = getToolText(result);
     expect(text).toMatch(/\d+ words/);
+  });
+});
+
+// ── get_node_content with include_descendants (navigate_tree successor) ─
+
+describe("MCP get_node_content include_descendants", () => {
+  let harness: McpTestHarness;
+
+  afterEach(async () => {
+    if (harness) await harness.cleanup();
+  });
+
+  test("returns node and all descendants", async () => {
+    harness = await createMcpTestClient(allDocs());
+    const result = await harness.client.callTool({
+      name: "get_node_content",
+      arguments: {
+        doc_id: "docs:auth",
+        node_ids: ["docs:auth:n1"],
+        include_descendants: true,
+      },
+    });
+
+    const text = getToolText(result);
+    expect(text).toContain("Authentication Guide");
+    expect(text).toContain("Token Refresh");
+    expect(text).toContain("Error Handling");
+  });
+
+  test("defaults to exact nodes only (no descendants)", async () => {
+    harness = await createMcpTestClient(allDocs());
+    const result = await harness.client.callTool({
+      name: "get_node_content",
+      arguments: {
+        doc_id: "docs:auth",
+        node_ids: ["docs:auth:n1"],
+      },
+    });
+
+    const text = getToolText(result);
+    expect(text).toContain("Authentication Guide");
+    expect(text).not.toContain("Token Refresh");
+  });
+
+  test("dedupes overlapping subtrees", async () => {
+    harness = await createMcpTestClient(allDocs());
+    const result = await harness.client.callTool({
+      name: "get_node_content",
+      arguments: {
+        doc_id: "docs:auth",
+        // n2 is a descendant of n1 — it must appear only once.
+        node_ids: ["docs:auth:n1", "docs:auth:n2"],
+        include_descendants: true,
+      },
+    });
+
+    const text = getToolText(result);
+    const occurrences = text.split("[docs:auth:n2]").length - 1;
+    expect(occurrences).toBe(1);
+  });
+
+  test("navigate_tree alias still works and is marked deprecated", async () => {
+    harness = await createMcpTestClient(allDocs());
+    const { tools } = await harness.client.listTools();
+    const nav = tools.find((t) => t.name === "navigate_tree");
+    expect(nav?.description).toMatch(/DEPRECATED/);
+  });
+});
+
+// ── refresh_index ────────────────────────────────────────────────────
+
+describe("MCP refresh_index", () => {
+  let harness: McpTestHarness;
+
+  afterEach(async () => {
+    if (harness) await harness.cleanup();
+  });
+
+  test("not registered when no refresher is provided", async () => {
+    harness = await createMcpTestClient(allDocs());
+    const { tools } = await harness.client.listTools();
+    expect(tools.find((t) => t.name === "refresh_index")).toBeUndefined();
+  });
+
+  test("registered and reports the refresh summary when provided", async () => {
+    harness = await createMcpTestClient(allDocs(), {
+      refresh: async () => ({
+        total: 5,
+        added: 1,
+        changed: 2,
+        removed: 0,
+        unchanged: 2,
+        reloaded: true,
+        duration_ms: 12,
+      }),
+    });
+    const { tools } = await harness.client.listTools();
+    expect(tools.find((t) => t.name === "refresh_index")).toBeDefined();
+
+    const result = await harness.client.callTool({
+      name: "refresh_index",
+      arguments: {},
+    });
+    const text = getToolText(result);
+    expect(text).toContain("1 added");
+    expect(text).toContain("2 changed");
+    expect(text).toContain("5 documents total");
+  });
+
+  test("reports up-to-date when nothing changed", async () => {
+    harness = await createMcpTestClient(allDocs(), {
+      refresh: async () => ({
+        total: 3,
+        added: 0,
+        changed: 0,
+        removed: 0,
+        unchanged: 3,
+        reloaded: false,
+        duration_ms: 4,
+      }),
+    });
+    const result = await harness.client.callTool({
+      name: "refresh_index",
+      arguments: {},
+    });
+    expect(getToolText(result)).toContain("already up to date");
   });
 });
 

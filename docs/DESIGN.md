@@ -394,10 +394,11 @@ search layer of this project.
    Handles both markdown nodes and code symbol nodes identically.
    Supports incremental re-indexing via content hashing.
 
-4. **MCP Server** — Exposes 9 read tools via `@modelcontextprotocol/sdk`:
-   `list_documents`, `search_documents`, `grep_documents` (literal/regex
-   match without stemming), `get_tree`, `get_node_content`, `navigate_tree`
-   (all work on docs, code, and structured rows), plus `find_symbol` for
+4. **MCP Server** — Exposes the read tools via `@modelcontextprotocol/sdk`:
+   `compile_context`, `list_documents`, `search_documents`, `grep_documents`
+   (literal/regex match without stemming), `get_tree`, `get_node_content`
+   (with optional `include_descendants` for whole subtrees; all work on
+   docs, code, and structured rows), `refresh_index`, plus `find_symbol` for
    code-specific filtering by symbol kind and language, `lookup_row`
    for O(1) key→row retrieval against indexed CSV/JSONL data, and
    `compile_context` for composed retrieval (single call collapsing the
@@ -536,7 +537,7 @@ multiplier. Search results are BM25-scored × collection weight. The
 Step 1 — search_documents (Pagefind-style BM25 search with facets)
 Step 2 — get_tree (PageIndex-style structural outline)
 Step 3 — Agent reasons over the tree (PageIndex insight)
-Step 4 — navigate_tree or get_node_content (precise retrieval)
+Step 4 — get_node_content, optionally with descendants (precise retrieval)
 Step 5 — Synthesize answer from structured, precise context
 ```
 

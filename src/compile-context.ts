@@ -314,7 +314,7 @@ function formatFollowUp(): string {
   return [
     "## Follow-up",
     `- Read full content: get_node_content("<doc_id>", ["<node_id>"])`,
-    `- Drill into a subtree: navigate_tree("<doc_id>", "<node_id>")`,
+    `- Drill into a subtree: get_node_content("<doc_id>", ["<node_id>"], include_descendants=true)`,
     `- Exact-match recheck: grep_documents("<intent>")`,
   ].join("\n");
 }

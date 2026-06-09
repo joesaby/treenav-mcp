@@ -1455,6 +1455,10 @@ export class DocumentStore {
   hasDocument(doc_id: string): boolean {
     return this.docs.has(doc_id);
   }
+
+  getAllDocIds(): string[] {
+    return [...this.docs.keys()];
+  }
 }
 
 // ── Grep regex compilation ──────────────────────────────────────────
