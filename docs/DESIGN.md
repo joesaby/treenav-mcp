@@ -231,8 +231,8 @@ so the agent can make retrieval decisions without loading full content.
 | `title_weight` | (heading weight) | 3.0 | Heading match importance |
 | `code_weight` | (custom weight) | 1.5 | Code block match importance |
 | `description_weight` | (meta weight) | 2.0 | Description match importance |
-| `term_proximity_bonus` | (multi-term) | 2.0 | Co-occurrence reward |
-| `full_coverage_bonus` | (coverage) | 5.0 | All-terms-present reward |
+| `term_proximity_bonus` | (multi-term) | 0.01 | Co-occurrence reward (RRF-rescaled) |
+| `full_coverage_bonus` | (coverage) | 0.05 | All-terms-present reward (RRF-rescaled) |
 | `prefix_penalty` | `termSimilarity` | 0.5 | Prefix match discount |
 
 **What Pagefind does that we DON'T do (and why):**
@@ -555,14 +555,14 @@ Context budget: 2K-8K tokens vs vector RAG's 4K-20K tokens.
 | `title_weight` | 3.0 | Title matches count less | Title matches dominate |
 | `code_weight` | 1.5 | Code matches count less | Code references promoted |
 | `description_weight` | 2.0 | Description less important | Description promoted |
-| `term_proximity_bonus` | 2.0 | Less co-occurrence reward | Multi-term sections promoted |
-| `full_coverage_bonus` | 5.0 | Less full-match reward | All-terms sections promoted |
+| `term_proximity_bonus` | 0.01 | Less co-occurrence reward | Multi-term sections promoted |
+| `full_coverage_bonus` | 0.05 | Less full-match reward | All-terms sections promoted |
 | `prefix_penalty` | 0.5 | Prefix closer to exact | Prefix heavily discounted |
 
 **By corpus type:**
 - API reference: `k1=0.8, b=0.9, code_weight=2.5`
 - Tutorials: defaults work well
-- Mixed corpus: `k1=1.0, b=0.6, full_coverage_bonus=8.0`
+- Mixed corpus: `k1=1.0, b=0.6, full_coverage_bonus=0.08`
 
 ---
 

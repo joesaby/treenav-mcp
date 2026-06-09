@@ -73,6 +73,7 @@ A GitHub Release is created automatically with generated release notes. Docker H
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DOCS_ROOT` | `./docs` | Path to markdown repository |
+| `DOCS_ROOTS` | *(unset)* | Multiple weighted roots (`./docs:1.0,./rfcs:0.5`); overrides `DOCS_ROOT` |
 | `DOCS_GLOB` | `**/*.md` | File glob (comma-separated for multi-glob, e.g. `**/*.md,**/*.csv,**/*.jsonl`) |
 | `CSV_MAX_TEXT_LENGTH` | `2000` | Max chars indexed per text field in CSV/JSONL rows |
 | `MAX_DEPTH` | `6` | Max heading depth to index |

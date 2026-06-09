@@ -1384,6 +1384,28 @@ export class DocumentStore {
     return this.docs.get(doc_id)?.meta ?? null;
   }
 
+  /**
+   * Partition the loaded collections by source kind for compile_context.
+   * A collection is "code" when its documents carry the content_type=code
+   * facet (set by the code indexer); everything else is "docs". This keeps
+   * source routing correct for custom CODE_COLLECTION names and for
+   * multi-root DOCS_ROOTS setups.
+   */
+  getSourceCollections(): { docs: string[]; code: string[] } {
+    const code = new Set<string>();
+    const all = new Set<string>();
+    for (const doc of this.docs.values()) {
+      all.add(doc.meta.collection);
+      if (doc.meta.facets["content_type"]?.includes("code")) {
+        code.add(doc.meta.collection);
+      }
+    }
+    return {
+      docs: [...all].filter((c) => !code.has(c)),
+      code: [...code],
+    };
+  }
+
   getGlossaryTerms(): string[] {
     return [...this.glossary.keys()];
   }

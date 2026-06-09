@@ -4,6 +4,9 @@ const sub = Bun.argv[2];
 if (sub === "init") {
   const { main } = await import('./src/cli-init.ts');
   await main();
+} else if (sub === "serve:http") {
+  await import('./src/server-http.ts');
 } else {
+  // `treenav` or `treenav serve` → stdio MCP server
   await import('./src/server.ts');
 }
