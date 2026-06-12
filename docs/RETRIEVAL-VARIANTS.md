@@ -59,7 +59,7 @@ The Semble feature port (PRs 0–7) is the complete implementation history. Repr
 
 8 read tools (the pre-PR-33 set):
 
-- `list_documents`, `search_documents`, `grep_documents`, `get_tree`, `get_node_content`, `navigate_tree`, `lookup_row`, `find_symbol`
+- `compile_context`, `list_documents`, `search_documents`, `grep_documents`, `get_tree`, `get_node_content` (± descendants), `lookup_row`, `find_symbol`, `refresh_index`
 
 Each tool is a primitive. Skills compose them: `search → tree → content`, or `find_symbol → content`, or `lookup_row` directly.
 

@@ -231,8 +231,8 @@ so the agent can make retrieval decisions without loading full content.
 | `title_weight` | (heading weight) | 3.0 | Heading match importance |
 | `code_weight` | (custom weight) | 1.5 | Code block match importance |
 | `description_weight` | (meta weight) | 2.0 | Description match importance |
-| `term_proximity_bonus` | (multi-term) | 2.0 | Co-occurrence reward |
-| `full_coverage_bonus` | (coverage) | 5.0 | All-terms-present reward |
+| `term_proximity_bonus` | (multi-term) | 0.01 | Co-occurrence reward (RRF-rescaled) |
+| `full_coverage_bonus` | (coverage) | 0.05 | All-terms-present reward (RRF-rescaled) |
 | `prefix_penalty` | `termSimilarity` | 0.5 | Prefix match discount |
 
 **What Pagefind does that we DON'T do (and why):**
@@ -394,10 +394,11 @@ search layer of this project.
    Handles both markdown nodes and code symbol nodes identically.
    Supports incremental re-indexing via content hashing.
 
-4. **MCP Server** — Exposes 9 read tools via `@modelcontextprotocol/sdk`:
-   `list_documents`, `search_documents`, `grep_documents` (literal/regex
-   match without stemming), `get_tree`, `get_node_content`, `navigate_tree`
-   (all work on docs, code, and structured rows), plus `find_symbol` for
+4. **MCP Server** — Exposes the read tools via `@modelcontextprotocol/sdk`:
+   `compile_context`, `list_documents`, `search_documents`, `grep_documents`
+   (literal/regex match without stemming), `get_tree`, `get_node_content`
+   (with optional `include_descendants` for whole subtrees; all work on
+   docs, code, and structured rows), `refresh_index`, plus `find_symbol` for
    code-specific filtering by symbol kind and language, `lookup_row`
    for O(1) key→row retrieval against indexed CSV/JSONL data, and
    `compile_context` for composed retrieval (single call collapsing the
@@ -536,7 +537,7 @@ multiplier. Search results are BM25-scored × collection weight. The
 Step 1 — search_documents (Pagefind-style BM25 search with facets)
 Step 2 — get_tree (PageIndex-style structural outline)
 Step 3 — Agent reasons over the tree (PageIndex insight)
-Step 4 — navigate_tree or get_node_content (precise retrieval)
+Step 4 — get_node_content, optionally with descendants (precise retrieval)
 Step 5 — Synthesize answer from structured, precise context
 ```
 
@@ -555,14 +556,14 @@ Context budget: 2K-8K tokens vs vector RAG's 4K-20K tokens.
 | `title_weight` | 3.0 | Title matches count less | Title matches dominate |
 | `code_weight` | 1.5 | Code matches count less | Code references promoted |
 | `description_weight` | 2.0 | Description less important | Description promoted |
-| `term_proximity_bonus` | 2.0 | Less co-occurrence reward | Multi-term sections promoted |
-| `full_coverage_bonus` | 5.0 | Less full-match reward | All-terms sections promoted |
+| `term_proximity_bonus` | 0.01 | Less co-occurrence reward | Multi-term sections promoted |
+| `full_coverage_bonus` | 0.05 | Less full-match reward | All-terms sections promoted |
 | `prefix_penalty` | 0.5 | Prefix closer to exact | Prefix heavily discounted |
 
 **By corpus type:**
 - API reference: `k1=0.8, b=0.9, code_weight=2.5`
 - Tutorials: defaults work well
-- Mixed corpus: `k1=1.0, b=0.6, full_coverage_bonus=8.0`
+- Mixed corpus: `k1=1.0, b=0.6, full_coverage_bonus=0.08`
 
 ---
 

@@ -367,6 +367,16 @@ describe("dispatchGrep", () => {
     // Verify it's not just the doc_id
     expect(hits.some((h) => h.doc_id !== h.doc_title)).toBe(true);
   });
+
+  test("scopes hits to the requested source's collections", () => {
+    const store = makeStoreWithFixtures();
+    // "rotateToken" only exists in the code doc; "rotation procedure" only
+    // in the docs doc. Each source must see only its own collections.
+    expect(dispatchGrep(store, "rotateToken", "code", undefined, 10).length).toBeGreaterThan(0);
+    expect(dispatchGrep(store, "rotateToken", "docs", undefined, 10)).toEqual([]);
+    expect(dispatchGrep(store, "rotation procedure", "docs", undefined, 10).length).toBeGreaterThan(0);
+    expect(dispatchGrep(store, "rotation procedure", "code", undefined, 10)).toEqual([]);
+  });
 });
 
 import { dispatchSymbol } from "../src/compile-context";
@@ -711,6 +721,69 @@ describe("compileContext edge cases", () => {
       output: { top_k_per_source: 3, max_tokens: 2000 },
     });
     expect(result.hits_by_source.rows.length).toBe(0);
+  });
+
+  test("grep mode does not duplicate hits across source partitions", () => {
+    const store = makeStoreWithFixtures();
+    const { result } = compileContext(store, {
+      intent: "rotateToken",
+      mode: "grep",
+      sources: ["docs", "code"],
+      output: { top_k_per_source: 10, max_tokens: 8000 },
+    });
+    // "rotateToken" only exists in the code doc — it must appear in the
+    // code partition only, not be mirrored into the docs partition.
+    expect(result.hits_by_source.code.map((h) => h.doc_id)).toContain("auth-service");
+    expect(result.hits_by_source.docs).toEqual([]);
+  });
+
+  test("custom code collection name still routes to the code partition", () => {
+    const store = new DocumentStore();
+    store.load([
+      makeDoc({
+        meta: {
+          doc_id: "wiki:auth",
+          file_path: "auth.md",
+          title: "Auth Wiki",
+          collection: "wiki",
+          facets: { type: ["guide"] },
+        },
+        tree: [
+          makeNode({
+            node_id: "n0",
+            title: "Auth Wiki",
+            content: "Token rotation guidance for operators.",
+          }),
+        ],
+      }),
+      makeDoc({
+        meta: {
+          doc_id: "engine:auth",
+          file_path: "src/auth.ts",
+          title: "auth.ts",
+          collection: "engine", // custom CODE_COLLECTION name
+          facets: { content_type: ["code"], language: ["typescript"] },
+        },
+        tree: [
+          makeNode({
+            node_id: "c0",
+            title: "function rotateToken",
+            content: "function rotateToken() { /* token rotation */ }",
+            symbol_kind: "function",
+            symbol_name: "rotateToken",
+          }),
+        ],
+      }),
+    ]);
+
+    const { result } = compileContext(store, {
+      intent: "token rotation",
+      mode: "search",
+      sources: ["docs", "code"],
+      output: { top_k_per_source: 5, max_tokens: 8000 },
+    });
+    expect(result.hits_by_source.docs.map((h) => h.doc_id)).toContain("wiki:auth");
+    expect(result.hits_by_source.code.map((h) => h.doc_id)).toContain("engine:auth");
   });
 
   test("missing CODE_ROOT (no code documents) returns empty code partition", () => {

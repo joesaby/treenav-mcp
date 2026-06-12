@@ -175,6 +175,32 @@ Six seven eight.
       expect(node.line_end).not.toBe(-1);
     }
   });
+
+  test("repeated heading titles get distinct line_start values", () => {
+    // Two sections titled "Setup" — line lookup must resume after the
+    // previous heading rather than re-matching the first occurrence.
+    const body = [
+      "# Doc",        // line 1
+      "",
+      "## Setup",     // line 3
+      "",
+      "First setup.",
+      "",
+      "## Other",     // line 7
+      "",
+      "Middle.",
+      "",
+      "## Setup",     // line 11
+      "",
+      "Second setup.",
+    ].join("\n");
+    const nodes = buildTree(body, "test:doc");
+
+    const setups = nodes.filter((n) => n.title === "Setup");
+    expect(setups.length).toBe(2);
+    expect(setups[0].line_start).toBe(3);
+    expect(setups[1].line_start).toBe(11);
+  });
 });
 
 // ── indexFile integration tests ─────────────────────────────────────

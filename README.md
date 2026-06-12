@@ -14,14 +14,14 @@ BM25 search, literal/regex grep, AST-based tree navigation, and O(1) row lookup 
 
 ## How it works
 
-The same nine tools work identically on markdown docs, source code, and structured data:
+The same toolset works identically on markdown docs, source code, and structured data:
 
 **Navigating documentation:**
 
 ```
 search_documents("auth token refresh")
-  → [docs:auth:middleware] Token Lifecycle (score 44.2)
-  → [docs:auth:service]   Authentication Flow (score 38.1)
+  → [docs:auth:middleware] Token Lifecycle (score 0.0442)
+  → [docs:auth:service]   Authentication Flow (score 0.0381)
 
 get_tree("docs:auth:middleware")
   [n3] ## Token Lifecycle
@@ -30,7 +30,7 @@ get_tree("docs:auth:middleware")
       [n6] #### Manual Refresh API (150 words)
     [n7] ### Error Handling (200 words)
 
-navigate_tree("docs:auth:middleware", "n4")
+get_node_content("docs:auth:middleware", ["n4"], include_descendants=true)
   → full text of n4 + n5 + n6 only (420 words, not the whole doc)
 ```
 
@@ -121,15 +121,16 @@ DOCS_ROOT=./docs bun run serve:http                  # HTTP (port 3100)
 
 | Tool | Description |
 |------|-------------|
-| `list_documents` | Browse catalog with tag/keyword filtering and facet counts |
-| `search_documents` | BM25 keyword search with facet filters and glossary expansion |
+| `compile_context` | **Start here.** Single-call composed retrieval: ranked hits per source + outline trees for top hits. Replaces the typical `search → tree → content` loop |
+| `search_documents` | BM25 keyword search with facet filters, collection scoping, and glossary expansion |
 | `grep_documents` | Literal/regex match across indexed content — the `grep -n` of the index |
 | `get_tree` | Hierarchical outline — structure and word counts, no content |
-| `get_node_content` | Retrieve full text of specific sections by node ID |
-| `navigate_tree` | Get a section and all its descendants in one call |
+| `get_node_content` | Retrieve full text of specific sections by node ID; `include_descendants=true` returns whole subtrees |
 | `lookup_row` | O(1) key→row lookup for indexed CSV/JSONL data |
 | `find_symbol` | Search code symbols by name, kind, and language (requires `CODE_ROOT`) |
-| `compile_context` | Single-call composed retrieval: ranked hits per source + outline trees for top hits. Replaces the typical `search → tree → content` loop |
+| `list_documents` | Browse the catalog and discover available facets (returns facet counts) |
+| `refresh_index` | Re-scan the roots and reload the index if files changed on disk |
+| `navigate_tree` | *Deprecated* — alias of `get_node_content` with `include_descendants=true` |
 
 ## Supported Languages
 
@@ -137,11 +138,12 @@ DOCS_ROOT=./docs bun run serve:http                  # HTTP (port 3100)
 
 | Language | Parser | Symbols extracted |
 |----------|--------|------------------|
-| TypeScript / JavaScript | Regex AST | classes, interfaces, functions, types, enums |
-| Python | Indentation-aware | classes, functions, methods |
-| Go, Rust, Java, Kotlin, Scala | Generic | structs/classes, functions, interfaces, enums |
-| C, C++ | Generic + `ClassName::method()` | classes, method implementations |
-| C#, Ruby, Swift, PHP, Lua, Shell | Generic | classes, functions |
+| TypeScript / JavaScript | Dedicated (regex AST) | classes, interfaces, functions, types, enums, methods, properties |
+| Python | Dedicated (indentation-aware) | classes, functions, methods, constants |
+| Go | Dedicated (receiver-aware) | structs, interfaces, type aliases, functions, receiver methods |
+| Rust | Dedicated (impl-aware) | structs, enums, traits, impl methods, functions, consts |
+| Java | Dedicated | classes, interfaces, enums, records, methods |
+| Kotlin, Scala, C, C++, C#, Ruby, Swift, PHP, Lua, Shell | Generic fallback | classes, functions (C++: `ClassName::method()` impls) |
 
 **Markdown indexing:** any `.md` file, heading levels 1–6.
 
@@ -149,6 +151,7 @@ DOCS_ROOT=./docs bun run serve:http                  # HTTP (port 3100)
 
 ```bash
 DOCS_ROOT=./docs          # markdown root (required unless CODE_ROOT set)
+DOCS_ROOTS=./docs:1.0,./rfcs:0.5  # multiple weighted roots (overrides DOCS_ROOT)
 CODE_ROOT=./src           # source code root (optional, enables code nav)
 DOCS_GLOB=**/*.md         # file glob for markdown
 CODE_GLOB=**/*.{ts,py}    # file glob for code (default: all supported)

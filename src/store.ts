@@ -1384,6 +1384,37 @@ export class DocumentStore {
     return this.docs.get(doc_id)?.meta ?? null;
   }
 
+  /**
+   * Partition the loaded collections by source kind for compile_context.
+   * A collection is "code" when EVERY document in it carries the
+   * content_type=code facet — the code indexer sets that facet
+   * unconditionally on each doc it produces, so this holds for any code
+   * collection regardless of its CODE_COLLECTION name. Requiring all docs
+   * (not any) means a markdown collection containing a stray doc with
+   * `content_type: code` frontmatter stays classified as "docs" rather
+   * than flipping wholesale. Assumes collections map 1:1 to roots (no
+   * mixed markdown+code collections), which both server entrypoints
+   * guarantee.
+   */
+  getSourceCollections(): { docs: string[]; code: string[] } {
+    const totals = new Map<string, number>();
+    const codeCounts = new Map<string, number>();
+    for (const doc of this.docs.values()) {
+      const c = doc.meta.collection;
+      totals.set(c, (totals.get(c) ?? 0) + 1);
+      if (doc.meta.facets["content_type"]?.includes("code")) {
+        codeCounts.set(c, (codeCounts.get(c) ?? 0) + 1);
+      }
+    }
+    const docs: string[] = [];
+    const code: string[] = [];
+    for (const [c, total] of totals) {
+      if ((codeCounts.get(c) ?? 0) === total) code.push(c);
+      else docs.push(c);
+    }
+    return { docs, code };
+  }
+
   getGlossaryTerms(): string[] {
     return [...this.glossary.keys()];
   }
@@ -1432,6 +1463,10 @@ export class DocumentStore {
 
   hasDocument(doc_id: string): boolean {
     return this.docs.has(doc_id);
+  }
+
+  getAllDocIds(): string[] {
+    return [...this.docs.keys()];
   }
 }
 

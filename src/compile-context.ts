@@ -48,6 +48,24 @@ export function resolveMode(intent: string): ResolvedMode {
 }
 
 /**
+ * Resolve the facet filters that scope a dispatch to one source. The
+ * collections behind a source are looked up from the store (not hardcoded)
+ * so custom CODE_COLLECTION names and multi-root DOCS_ROOTS setups route
+ * correctly. Returns null when the source has no collections — the caller
+ * should short-circuit to an empty hit list.
+ */
+function sourceFilters(
+  store: DocumentStore,
+  source: "docs" | "code",
+  filters: Record<string, string | string[]> | undefined
+): Record<string, string | string[]> | null {
+  const collections = store.getSourceCollections()[source];
+  if (collections.length === 0) return null;
+  // Caller-supplied filters win on conflict (including `collection`).
+  return { collection: collections, ...(filters ?? {}) };
+}
+
+/**
  * Dispatch a BM25 search against a single source collection.
  * Returns up to topK hits, each tagged with the source.
  */
@@ -58,11 +76,11 @@ export function dispatchSearch(
   filters: Record<string, string | string[]> | undefined,
   topK: number
 ): CompileContextHit[] {
-  const collection = source === "docs" ? "docs" : "code";
+  const scoped = sourceFilters(store, source, filters);
+  if (!scoped) return [];
   const results = store.searchDocuments(intent, {
     limit: topK,
-    collection,
-    filters,
+    filters: scoped,
   });
   return results.map((r) => ({
     source,
@@ -111,13 +129,17 @@ export function dispatchGrep(
   filters: Record<string, string | string[]> | undefined,
   topK: number
 ): CompileContextHit[] {
+  // Scope the scan to the source's collections — without this, the same
+  // hit would be returned (and misattributed) under every requested source.
+  const scoped = sourceFilters(store, source, filters);
+  if (!scoped) return [];
   // Treat regex if it contains regex metacharacters; otherwise literal.
   const regex = REGEX_META_RE.test(intent);
   const outcome = store.grepDocuments({
     pattern: intent,
     regex,
     case_insensitive: false,
-    filters,
+    filters: scoped,
     context: 0,
     limit: topK,
   });
@@ -292,7 +314,7 @@ function formatFollowUp(): string {
   return [
     "## Follow-up",
     `- Read full content: get_node_content("<doc_id>", ["<node_id>"])`,
-    `- Drill into a subtree: navigate_tree("<doc_id>", "<node_id>")`,
+    `- Drill into a subtree: get_node_content("<doc_id>", ["<node_id>"], include_descendants=true)`,
     `- Exact-match recheck: grep_documents("<intent>")`,
   ].join("\n");
 }

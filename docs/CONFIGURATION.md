@@ -7,7 +7,8 @@
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DOCS_ROOT` | `./docs` | Path to markdown repository root |
-| `DOCS_GLOB` | `**/*.md` | File glob (comma-separated for multi-glob, e.g. `**/*.md,**/*.csv,**/*.jsonl`) |
+| `DOCS_ROOTS` | *(unset)* | Multiple weighted roots, e.g. `./docs:1.0,./rfcs:0.5` — see [Multiple Collections](#multiple-collections). Overrides `DOCS_ROOT`. |
+| `DOCS_GLOB` | `**/*.md` | File glob (comma-separated for multi-glob, e.g. `**/*.md,**/*.csv,**/*.jsonl`). Applies to every docs collection. |
 | `CSV_MAX_TEXT_LENGTH` | `2000` | Max chars indexed per text field in CSV/JSONL rows |
 | `MAX_DEPTH` | `6` | Max heading depth to index (1–6) |
 | `SUMMARY_LENGTH` | `200` | Characters in node summaries |
@@ -27,7 +28,7 @@ Set `CODE_ROOT` to enable AST-based code indexing alongside markdown docs.
 
 **Supported languages:** TypeScript, JavaScript, Python, Go, Rust, Java, Kotlin, Scala, C, C++, C#, Ruby, Swift, PHP, Lua, Shell
 
-**How it works:** Source files are parsed into the same tree structure used for markdown. Classes, functions, interfaces, and types become tree nodes with parent-child relationships (e.g., class → methods). All existing tools (`search_documents`, `get_tree`, `get_node_content`, `navigate_tree`) work on code files unchanged. The `find_symbol` tool provides code-specific filtering by symbol kind and language.
+**How it works:** Source files are parsed into the same tree structure used for markdown. Classes, functions, interfaces, and types become tree nodes with parent-child relationships (e.g., class → methods). All existing tools (`search_documents`, `get_tree`, `get_node_content`) work on code files unchanged. The `find_symbol` tool provides code-specific filtering by symbol kind and language.
 
 **Auto-generated facets for code:**
 
@@ -91,7 +92,16 @@ Index multiple doc folders as weighted collections (Pagefind multisite style):
 DOCS_ROOTS=./docs:1.0,./api-specs:0.8,./rfcs:0.5
 ```
 
-Each collection is named from its folder. The weight multiplier is applied to BM25 scores at query time, so a result from `docs` (weight 1.0) will outrank an equally relevant result from `rfcs` (weight 0.5). An automatic `collection` filter facet is added to every document.
+Each collection is named from its folder basename (duplicate basenames get a
+numeric suffix: `docs`, `docs-2`). The weight is optional and defaults to
+`1.0`. The weight multiplier is applied to scores at query time, so a result
+from `docs` (weight 1.0) will outrank an equally relevant result from `rfcs`
+(weight 0.5). An automatic `collection` filter facet is added to every
+document, so searches can be scoped with `filters: { "collection": "rfcs" }`.
+
+When `DOCS_ROOTS` is set it replaces `DOCS_ROOT`. `DOCS_GLOB` applies to all
+listed roots, and the default glossary location becomes
+`<first root>/glossary.json`.
 
 ---
 
@@ -103,6 +113,10 @@ environment variables. The defaults below work well for most documentation
 corpora. For per-knob descriptions and corpus-type recommendations see
 [DESIGN.md](./DESIGN.md#scoring-tuning-guide).
 
+Since the Tier 3 RRF (Reciprocal Rank Fusion) rework, fused scores live in
+roughly `[0, 0.05]`, so the additive bonus defaults are two orders of
+magnitude smaller than in older releases.
+
 | Parameter | Default | Effect |
 |-----------|---------|--------|
 | `bm25_k1` | `1.2` | TF saturation — lower means repeated terms matter less |
@@ -110,9 +124,22 @@ corpora. For per-knob descriptions and corpus-type recommendations see
 | `title_weight` | `3.0` | Boost for matches in headings |
 | `code_weight` | `1.5` | Boost for matches in code blocks |
 | `description_weight` | `2.0` | Boost for matches in frontmatter description |
-| `term_proximity_bonus` | `2.0` | Co-occurrence reward for multi-term queries |
-| `full_coverage_bonus` | `5.0` | All-terms-present reward |
-| `prefix_penalty` | `0.5` | Discount applied to prefix-only matches |
+| `term_proximity_bonus` | `0.01` | Co-occurrence reward for multi-term queries |
+| `full_coverage_bonus` | `0.05` | All-terms-present reward |
+| `prefix_penalty` | `0.5` | RRF weight for the prefix signal (legacy fallback for `signal_weights.bm25_prefix`) |
+| `rrf_k` | `60` | RRF rank-curve constant — lower makes top hits dominate more |
+| `signal_weights` | `{}` | Per-signal RRF weights (`bm25_exact`, `bm25_prefix`, `subtoken`); missing keys fall back to legacy knobs |
+| `definition_boost` | `2.0` | Multiplier when a query term matches a code symbol's definition |
+| `subtoken_weight` | `0.5` | Weight for camelCase/snake_case subtoken matches in code |
+| `file_coherence_bonus` | `0.05` | Lift for files with multiple matching sections |
+| `file_lead_bonus` | `0.05` | Extra lift for the leading node of a multi-hit file |
+| `window_density_bonus` | `0.005` | Reward for tightly clustered matches in long sections |
+| `symbol_query_definition_boost_multiplier` | `1.5` | Extra definition boost for identifier-shaped queries |
+| `symbol_query_exact_boost` | `1.3` | Extra exact-signal weight for identifier-shaped queries |
+| `symbol_query_subtoken_dampener` | `0.5` | Subtoken-signal dampening for identifier-shaped queries |
+
+See `src/types.ts` (`RankingParams` / `DEFAULT_RANKING`) for the authoritative
+per-knob documentation.
 
 > **Note:** the only ranking-related env var honored at runtime is
 > `CODE_WEIGHT` (multiplier on the *code collection*'s BM25 results, see
@@ -167,7 +194,7 @@ category: auth       # any domain-specific grouping
 
 ### Reserved frontmatter keys
 
-These are used internally and not exposed as filter facets: `title`, `description`, `layout`, `permalink`, `slug`, `draft`, `date`.
+These are used internally and not exposed as filter facets: `title`, `description`, `layout`, `permalink`, `slug`, `draft`, `date`, `source_url`, `source_title`, `captured_at`.
 
 ### Auto-inferred `type` from directory structure
 
