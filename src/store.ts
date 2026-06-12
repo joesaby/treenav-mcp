@@ -1386,24 +1386,33 @@ export class DocumentStore {
 
   /**
    * Partition the loaded collections by source kind for compile_context.
-   * A collection is "code" when its documents carry the content_type=code
-   * facet (set by the code indexer); everything else is "docs". This keeps
-   * source routing correct for custom CODE_COLLECTION names and for
-   * multi-root DOCS_ROOTS setups.
+   * A collection is "code" when EVERY document in it carries the
+   * content_type=code facet — the code indexer sets that facet
+   * unconditionally on each doc it produces, so this holds for any code
+   * collection regardless of its CODE_COLLECTION name. Requiring all docs
+   * (not any) means a markdown collection containing a stray doc with
+   * `content_type: code` frontmatter stays classified as "docs" rather
+   * than flipping wholesale. Assumes collections map 1:1 to roots (no
+   * mixed markdown+code collections), which both server entrypoints
+   * guarantee.
    */
   getSourceCollections(): { docs: string[]; code: string[] } {
-    const code = new Set<string>();
-    const all = new Set<string>();
+    const totals = new Map<string, number>();
+    const codeCounts = new Map<string, number>();
     for (const doc of this.docs.values()) {
-      all.add(doc.meta.collection);
+      const c = doc.meta.collection;
+      totals.set(c, (totals.get(c) ?? 0) + 1);
       if (doc.meta.facets["content_type"]?.includes("code")) {
-        code.add(doc.meta.collection);
+        codeCounts.set(c, (codeCounts.get(c) ?? 0) + 1);
       }
     }
-    return {
-      docs: [...all].filter((c) => !code.has(c)),
-      code: [...code],
-    };
+    const docs: string[] = [];
+    const code: string[] = [];
+    for (const [c, total] of totals) {
+      if ((codeCounts.get(c) ?? 0) === total) code.push(c);
+      else docs.push(c);
+    }
+    return { docs, code };
   }
 
   getGlossaryTerms(): string[] {

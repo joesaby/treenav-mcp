@@ -53,7 +53,9 @@ const server = new McpServer({
 // stdio (this file) and HTTP (server-http.ts) entrypoints stay aligned —
 // don't re-register it here.
 
-registerTools(server, store, { refresh: () => refreshStore(store, config) });
+registerTools(server, store, {
+  refresh: () => refreshStore(store, config, { glossary_path }),
+});
 registerPrompts(server);
 
 // ── Startup ──────────────────────────────────────────────────────────

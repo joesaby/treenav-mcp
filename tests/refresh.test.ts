@@ -66,6 +66,32 @@ describe("refreshStore", () => {
     expect(store.hasDocument("docs:beta")).toBe(false);
   });
 
+  test("glossary_path keeps post-refresh glossary identical to startup", async () => {
+    // Doc content with an auto-extractable acronym pattern.
+    await writeFile(
+      join(dir, "alpha.md"),
+      "# Alpha\n\nWe use JWT (Json Web Tokens) everywhere.\n"
+    );
+    const glossaryPath = join(dir, "glossary.json");
+    await writeFile(glossaryPath, JSON.stringify({ CLI: ["command line interface"] }));
+
+    // Startup order: load() merges auto entries, loadGlossary(file) then
+    // clears them and installs the explicit entries only.
+    store.load(await indexAllCollections(config));
+    store.loadGlossary(await Bun.file(glossaryPath).json());
+    expect(store.getGlossaryTerms()).toContain("cli");
+    expect(store.getGlossaryTerms()).not.toContain("jwt");
+
+    // Change a file and refresh with the glossary path: the reload
+    // re-merges auto entries, then the explicit glossary is re-applied —
+    // post-refresh state must match the startup state.
+    await writeFile(join(dir, "beta.md"), "# Beta\n\nUpdated beta content.\n");
+    const summary = await refreshStore(store, config, { glossary_path: glossaryPath });
+    expect(summary.reloaded).toBe(true);
+    expect(store.getGlossaryTerms()).toContain("cli");
+    expect(store.getGlossaryTerms()).not.toContain("jwt");
+  });
+
   test("reload preserves collection weights and ranking", async () => {
     store.setCollectionWeights({ docs: 0.5 });
     store.setRanking({ title_weight: 9.9 });

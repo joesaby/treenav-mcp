@@ -565,7 +565,7 @@ export function registerTools(
     const refresh = options.refresh;
     server.tool(
       "refresh_index",
-      "Re-scan the configured docs/code roots and reload the index if anything changed on disk. Use this after files have been created, edited, or deleted so search results reflect the current state. Cheap when nothing changed (content-hash comparison). Returns counts of added/changed/removed documents.",
+      "Re-scan and re-parse the configured docs/code roots, then reload the index if anything changed on disk (content-hash diff; the reload is skipped when clean, but the re-scan cost scales with corpus size). Use this after files have been created, edited, or deleted so search results reflect the current state. Returns counts of added/changed/removed documents.",
       {},
       async () => {
         try {

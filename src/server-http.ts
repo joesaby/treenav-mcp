@@ -93,7 +93,9 @@ function createMcpServer(store: DocumentStore): McpServer {
     version: "1.0.0",
   });
 
-  registerTools(server, store, { refresh: () => refreshStore(store, config) });
+  registerTools(server, store, {
+    refresh: () => refreshStore(store, config, { glossary_path }),
+  });
   registerPrompts(server);
 
   return server;
